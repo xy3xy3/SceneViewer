@@ -1,6 +1,8 @@
 refrepo/*
 !refrepo/.gitkeep
 
+.playwright-cli/
+
 # Repo-local data assets are generated/downloaded locally and should not be committed.
 # This includes raw dataset downloads and all preprocessed preview manifests.
 assets/*

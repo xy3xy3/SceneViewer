@@ -24,6 +24,11 @@ from .preprocess import (
     preprocess_scenesmith_dataset,
     write_dataset_catalog,
 )
+from .renderable import (
+    build_sage_renderables,
+    build_scenesmith_renderables,
+    write_renderable_catalog,
+)
 
 
 @dataclass(frozen=True)
@@ -447,6 +452,16 @@ def dataset_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParse
         help="Which dataset to preprocess.",
     )
 
+    renderable_parser = subparsers.add_parser(
+        "renderable",
+        help="Build web-renderable scene assets and manifests from preprocessed data.",
+    )
+    renderable_parser.add_argument(
+        "dataset",
+        choices=[*sorted(DATASETS), "all"],
+        help="Which dataset to turn into renderable assets.",
+    )
+
 
 def _resolve_paths(args: argparse.Namespace, spec: DatasetSpec) -> tuple[Path, Path]:
     destination = (args.destination or spec.destination_root).resolve()
@@ -494,6 +509,17 @@ def main() -> None:
             elif target == "scenesmith":
                 preprocess_scenesmith_dataset()
         catalog = write_dataset_catalog()
+        print(json.dumps(catalog, indent=2))
+        return
+
+    if args.command == "renderable":
+        targets = sorted(DATASETS) if args.dataset == "all" else [args.dataset]
+        for target in targets:
+            if target == "sage":
+                build_sage_renderables()
+            elif target == "scenesmith":
+                build_scenesmith_renderables()
+        catalog = write_renderable_catalog()
         print(json.dumps(catalog, indent=2))
         return
 

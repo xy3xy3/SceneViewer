@@ -11,6 +11,18 @@ export interface DatasetCatalogEntry {
   index_path: string;
 }
 
+export interface RenderableDatasetCatalog {
+  schema_version: number;
+  generated_at_utc: string;
+  datasets: RenderableDatasetCatalogEntry[];
+}
+
+export interface RenderableDatasetCatalogEntry {
+  dataset: string;
+  scene_count: number;
+  index_path: string;
+}
+
 export interface DatasetIndex {
   schema_version: number;
   generated_at_utc: string;
@@ -30,6 +42,25 @@ export interface SceneSummary {
   preview_image?: string | null;
   scene_manifest: string;
   stats: Record<string, number>;
+}
+
+export interface RenderableDatasetIndex {
+  schema_version: number;
+  generated_at_utc: string;
+  dataset: "sage" | "scenesmith";
+  scene_count: number;
+  shared_asset_count?: number;
+  scenes: RenderableSceneSummary[];
+}
+
+export interface RenderableSceneSummary {
+  scene_id: string;
+  scene_uid: string;
+  subset?: string | null;
+  render_manifest: string;
+  object_count: number;
+  room_count?: number;
+  room_shell_count?: number;
 }
 
 export interface SceneManifest {
@@ -141,3 +172,81 @@ export interface NormalizedObject {
   } | null;
   metadata?: Record<string, unknown>;
 }
+
+export interface RenderableSageDoor {
+  id: string;
+  wall_id: string;
+  position_on_wall: number;
+  width: number;
+  height: number;
+  texture_path?: string | null;
+}
+
+export interface RenderableSageObject {
+  id: string;
+  asset_path: string;
+  position: [number, number, number];
+  rotation_y_deg: number;
+  scale: [number, number, number];
+  native_size: [number, number, number];
+  description?: string | null;
+  type?: string | null;
+  source_id: string;
+}
+
+export interface RenderableSageRoom {
+  id: string;
+  room_type?: string | null;
+  dimensions?: { width?: number | null; length?: number | null; height?: number | null };
+  ceiling_height?: number | null;
+  floor_texture_path?: string | null;
+  wall_texture_path?: string | null;
+  walls: SageWall[];
+  doors: RenderableSageDoor[];
+  windows: SageWindow[];
+}
+
+export interface RenderableSceneSmithAsset {
+  id: string;
+  asset_path: string;
+  position: [number, number, number];
+  rotation_y_deg: number;
+  scale: [number, number, number];
+  room_id: string;
+}
+
+export interface RenderableSceneSmithRoomShell extends RenderableSceneSmithAsset {
+  category: "floor" | "wall" | "window";
+}
+
+export interface RenderableSceneSmithObject extends RenderableSceneSmithAsset {
+  object_type?: string | null;
+  description?: string | null;
+}
+
+export interface RenderableSageSceneManifest {
+  schema_version: number;
+  generated_at_utc: string;
+  dataset: "sage";
+  scene_id: string;
+  scene_uid: string;
+  source_scene_manifest: string;
+  objects: RenderableSageObject[];
+  rooms: RenderableSageRoom[];
+}
+
+export interface RenderableSceneSmithSceneManifest {
+  schema_version: number;
+  generated_at_utc: string;
+  dataset: "scenesmith";
+  scene_id: string;
+  scene_uid: string;
+  subset?: string | null;
+  source_scene_manifest: string;
+  room_shells: RenderableSceneSmithRoomShell[];
+  objects: RenderableSceneSmithObject[];
+}
+
+export type RenderableSceneManifest =
+  | RenderableSageSceneManifest
+  | RenderableSceneSmithSceneManifest;

@@ -15,6 +15,10 @@ import type {
   DatasetIndex,
   NormalizedObject,
   NormalizedRoom,
+  RenderableDatasetCatalog,
+  RenderableDatasetIndex,
+  RenderableSceneManifest,
+  RenderableSceneSummary,
   SceneManifest,
   SceneSummary,
 } from "./types";
@@ -24,11 +28,14 @@ function formatDatasetLabel(dataset: string): string {
   return dataset === "sage" ? "SAGE" : "SceneSmith";
 }
 
-function formatSceneLabel(scene: SceneSummary): string {
+function formatSceneLabel(
+  scene: RenderableSceneSummary,
+  metadata?: SceneSummary | null,
+): string {
   if (scene.subset) {
     return `${scene.subset} / ${scene.scene_id}`;
   }
-  return scene.title || scene.scene_id;
+  return metadata?.title || scene.scene_id;
 }
 
 function collectPreviewImages(scene: SceneManifest | null): string[] {
@@ -75,8 +82,15 @@ function roomSubtitle(room: NormalizedRoom, dataset: SceneManifest["dataset"]): 
 
 export default function App() {
   const [catalog, setCatalog] = useState<DatasetCatalog | null>(null);
+  const [renderCatalog, setRenderCatalog] = useState<RenderableDatasetCatalog | null>(null);
   const [datasetIndices, setDatasetIndices] = useState<Record<string, DatasetIndex>>({});
+  const [renderDatasetIndices, setRenderDatasetIndices] = useState<
+    Record<string, RenderableDatasetIndex>
+  >({});
   const [sceneCache, setSceneCache] = useState<Record<string, SceneManifest>>({});
+  const [renderSceneCache, setRenderSceneCache] = useState<Record<string, RenderableSceneManifest>>(
+    {},
+  );
   const [selectedDataset, setSelectedDataset] = useState<string>("");
   const [selectedSceneUid, setSelectedSceneUid] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -88,28 +102,60 @@ export default function App() {
     async function loadCatalog() {
       try {
         setLoading(true);
-        const nextCatalog = await fetchRepoJson<DatasetCatalog>("assets/preprocessed/datasets.json");
+        const [preprocessedCatalog, nextRenderCatalog] = await Promise.all([
+          fetchRepoJson<DatasetCatalog>("assets/preprocessed/datasets.json"),
+          fetchRepoJson<RenderableDatasetCatalog>("assets/renderable/datasets.json"),
+        ]);
         if (cancelled) {
           return;
         }
-        setCatalog(nextCatalog);
 
-        const indices = await Promise.all(
+        const renderEntries = new Map(
+          nextRenderCatalog.datasets.map((entry) => [entry.dataset, entry] as const),
+        );
+        const nextCatalog: DatasetCatalog = {
+          ...preprocessedCatalog,
+          datasets: preprocessedCatalog.datasets
+            .filter((entry) => renderEntries.has(entry.dataset))
+            .map((entry) => ({
+              ...entry,
+              scene_count: renderEntries.get(entry.dataset)?.scene_count ?? entry.scene_count,
+              skipped_count: entry.skipped_count ?? 0,
+            })),
+        };
+
+        const preprocessedIndices = await Promise.all(
           nextCatalog.datasets.map(async (entry) => [
             entry.dataset,
             await fetchRepoJson<DatasetIndex>(entry.index_path),
           ]),
+        );
+        const renderIndices = await Promise.all(
+          nextCatalog.datasets.map(async (entry) => {
+            const renderEntry = renderEntries.get(entry.dataset);
+            if (!renderEntry) {
+              throw new Error(`Missing renderable catalog entry for ${entry.dataset}`);
+            }
+            return [
+              entry.dataset,
+              await fetchRepoJson<RenderableDatasetIndex>(renderEntry.index_path),
+            ] as const;
+          }),
         );
 
         if (cancelled) {
           return;
         }
 
-        const nextIndices = Object.fromEntries(indices);
+        const nextIndices = Object.fromEntries(preprocessedIndices);
+        const nextRenderIndices = Object.fromEntries(renderIndices);
+        setCatalog(nextCatalog);
+        setRenderCatalog(nextRenderCatalog);
         setDatasetIndices(nextIndices);
+        setRenderDatasetIndices(nextRenderIndices);
 
         const defaultDataset = nextCatalog.datasets[0]?.dataset ?? "";
-        const defaultScene = nextIndices[defaultDataset]?.scenes[0]?.scene_uid ?? "";
+        const defaultScene = nextRenderIndices[defaultDataset]?.scenes[0]?.scene_uid ?? "";
         setSelectedDataset(defaultDataset);
         setSelectedSceneUid(defaultScene);
         setError(null);
@@ -133,13 +179,27 @@ export default function App() {
     };
   }, []);
 
-  const selectedDatasetEntry = catalog?.datasets.find(
+  const selectedDatasetEntry = (renderCatalog?.datasets.find(
     (entry) => entry.dataset === selectedDataset,
-  ) as DatasetCatalogEntry | undefined;
+  ) ?? catalog?.datasets.find(
+    (entry) => entry.dataset === selectedDataset,
+  )) as DatasetCatalogEntry | DatasetCatalogEntry | undefined;
 
-  const selectedDatasetIndex = datasetIndices[selectedDataset];
-  const selectedSceneSummary = selectedDatasetIndex?.scenes.find(
+  const selectedDatasetIndex = renderDatasetIndices[selectedDataset];
+  const selectedPreprocessedDatasetIndex = datasetIndices[selectedDataset];
+  const selectedSceneRenderSummary = selectedDatasetIndex?.scenes.find(
     (scene) => scene.scene_uid === selectedSceneUid,
+  );
+  const selectedSceneSummary = selectedPreprocessedDatasetIndex?.scenes.find(
+    (scene) => scene.scene_uid === selectedSceneUid,
+  );
+
+  const preprocessedSceneSummaryMap = useMemo(
+    () =>
+      new Map(
+        (selectedPreprocessedDatasetIndex?.scenes ?? []).map((scene) => [scene.scene_uid, scene] as const),
+      ),
+    [selectedPreprocessedDatasetIndex],
   );
 
   useEffect(() => {
@@ -179,8 +239,48 @@ export default function App() {
     };
   }, [sceneCache, selectedSceneSummary]);
 
+  useEffect(() => {
+    if (!selectedSceneRenderSummary) {
+      return;
+    }
+
+    const summary = selectedSceneRenderSummary;
+    if (renderSceneCache[summary.scene_uid]) {
+      return;
+    }
+
+    let cancelled = false;
+    async function loadRenderScene() {
+      try {
+        const manifest = await fetchRepoJson<RenderableSceneManifest>(summary.render_manifest);
+        if (cancelled) {
+          return;
+        }
+        setRenderSceneCache((current) => ({
+          ...current,
+          [summary.scene_uid]: manifest,
+        }));
+      } catch (loadError) {
+        if (!cancelled) {
+          const message =
+            loadError instanceof Error ? loadError.message : "Failed to load render manifest";
+          setError(message);
+        }
+      }
+    }
+
+    void loadRenderScene();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [renderSceneCache, selectedSceneRenderSummary]);
+
   const selectedScene = selectedSceneSummary
     ? sceneCache[selectedSceneSummary.scene_uid] ?? null
+    : null;
+  const selectedRenderScene = selectedSceneRenderSummary
+    ? renderSceneCache[selectedSceneRenderSummary.scene_uid] ?? null
     : null;
 
   const previewImages = useMemo(() => collectPreviewImages(selectedScene), [selectedScene]);
@@ -192,7 +292,7 @@ export default function App() {
 
   function handleDatasetChange(dataset: string) {
     setSelectedDataset(dataset);
-    const nextScene = datasetIndices[dataset]?.scenes[0]?.scene_uid ?? "";
+    const nextScene = renderDatasetIndices[dataset]?.scenes[0]?.scene_uid ?? "";
     setSelectedSceneUid(nextScene);
   }
 
@@ -205,7 +305,7 @@ export default function App() {
           </div>
           <div>
             <h1>SceneViewer</h1>
-            <p>Preview preprocessed SAGE and SceneSmith scenes directly from repo assets.</p>
+            <p>Preview SAGE and SceneSmith scenes with repo-local renderable assets.</p>
           </div>
         </div>
 
@@ -215,7 +315,7 @@ export default function App() {
             <select
               value={selectedDataset}
               onChange={(event) => handleDatasetChange(event.target.value)}
-              disabled={loading || !catalog?.datasets.length}
+              disabled={loading || !(catalog?.datasets.length ?? 0)}
             >
               {catalog?.datasets.map((entry) => (
                 <option key={entry.dataset} value={entry.dataset}>
@@ -234,7 +334,7 @@ export default function App() {
             >
               {selectedDatasetIndex?.scenes.map((scene) => (
                 <option key={scene.scene_uid} value={scene.scene_uid}>
-                  {formatSceneLabel(scene)}
+                  {formatSceneLabel(scene, preprocessedSceneSummaryMap.get(scene.scene_uid))}
                 </option>
               ))}
             </select>
@@ -248,12 +348,21 @@ export default function App() {
         <section className="preview-panel">
           <div className="panel-head">
             <div>
-              <p className="eyebrow">{selectedScene?.dataset ? formatDatasetLabel(selectedScene.dataset) : "Dataset"}</p>
-              <h2>{selectedScene?.display.title || selectedSceneSummary?.title || "Choose a scene"}</h2>
+              <p className="eyebrow">
+                {(selectedScene?.dataset || selectedRenderScene?.dataset)
+                  ? formatDatasetLabel(selectedScene?.dataset || selectedRenderScene?.dataset || "")
+                  : "Dataset"}
+              </p>
+              <h2>
+                {selectedScene?.display.title ||
+                  selectedSceneSummary?.title ||
+                  selectedSceneRenderSummary?.scene_id ||
+                  "Choose a scene"}
+              </h2>
               <p className="panel-subtitle">
                 {selectedScene?.display.subtitle ||
                   selectedScene?.description ||
-                  "Select a preprocessed scene to inspect its structure and assets."}
+                  "Select a renderable scene to inspect its geometry, textures, and source assets."}
               </p>
             </div>
 
@@ -264,16 +373,27 @@ export default function App() {
               </div>
               <div className="stat-pill">
                 <Boxes size={14} />
-                <span>{selectedScene?.stats.object_count ?? 0} objects</span>
+                <span>
+                  {selectedScene?.stats.object_count ??
+                    selectedSceneRenderSummary?.object_count ??
+                    0}{" "}
+                  objects
+                </span>
               </div>
               <div className="stat-pill">
                 <DoorOpen size={14} />
-                <span>{selectedScene?.stats.room_count ?? 0} rooms</span>
+                <span>
+                  {selectedScene?.stats.room_count ??
+                    selectedSceneRenderSummary?.room_count ??
+                    selectedSceneRenderSummary?.room_shell_count ??
+                    0}{" "}
+                  rooms
+                </span>
               </div>
             </div>
           </div>
 
-          <ScenePreviewCanvas scene={selectedScene} />
+          <ScenePreviewCanvas scene={selectedScene} renderScene={selectedRenderScene} />
         </section>
 
         <aside className="info-panel">

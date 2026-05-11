@@ -10,6 +10,9 @@ requires-python = ">=3.12"
 dependencies = [
     "huggingface-hub>=0.32.0",
     "httpx[socks]>=0.28.1,<1",
+    "pillow>=11.2.1",
+    "plyfile>=1.1.2",
+    "pygltflib>=1.16.5",
     "pyyaml>=6.0.2",
 ]
 
