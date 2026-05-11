@@ -6,6 +6,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 ASSETS_ROOT = REPO_ROOT / "assets"
+PREPROCESSED_ROOT = ASSETS_ROOT / "preprocessed"
 
 
 @dataclass(frozen=True)

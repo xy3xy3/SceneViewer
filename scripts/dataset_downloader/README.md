@@ -102,6 +102,30 @@ Include every SceneSmith subset:
 uv run dataset-downloader download scenesmith --subset all --sample-size 8 --dry-run
 ```
 
+## Preprocess
+
+Write normalized scene manifests to:
+
+- `/data/L202500274/SceneViewer/assets/preprocessed/sage`
+- `/data/L202500274/SceneViewer/assets/preprocessed/scenesmith`
+
+Run per dataset:
+
+```bash
+uv run dataset-downloader preprocess sage
+uv run dataset-downloader preprocess scenesmith
+```
+
+Or regenerate everything plus a shared dataset catalog:
+
+```bash
+uv run dataset-downloader preprocess all
+```
+
+The preprocessor is tolerant of partially downloaded scenes. If a scene is missing
+critical files, it is recorded under `skipped_scenes` in the dataset `index.json`
+instead of aborting the whole run.
+
 ## Notes For The Next Step
 
 The download manifest is intentionally structured so the preprocessing stage can read

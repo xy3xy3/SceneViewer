@@ -19,6 +19,11 @@ from huggingface_hub import HfApi, hf_hub_download
 from huggingface_hub.hf_api import RepoFile
 
 from .config import DATASETS, DatasetSpec, SCENESMITH_ALL_SUBSETS
+from .preprocess import (
+    preprocess_sage_dataset,
+    preprocess_scenesmith_dataset,
+    write_dataset_catalog,
+)
 
 
 @dataclass(frozen=True)
@@ -432,6 +437,16 @@ def dataset_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParse
         help="Delete an existing extract directory and unpack the archive again.",
     )
 
+    preprocess_parser = subparsers.add_parser(
+        "preprocess",
+        help="Normalize downloaded scenes into a shared manifest format for web preview.",
+    )
+    preprocess_parser.add_argument(
+        "dataset",
+        choices=[*sorted(DATASETS), "all"],
+        help="Which dataset to preprocess.",
+    )
+
 
 def _resolve_paths(args: argparse.Namespace, spec: DatasetSpec) -> tuple[Path, Path]:
     destination = (args.destination or spec.destination_root).resolve()
@@ -471,6 +486,18 @@ def main() -> None:
     dataset_parser(subparsers)
 
     args = parser.parse_args()
+    if args.command == "preprocess":
+        indices = []
+        targets = sorted(DATASETS) if args.dataset == "all" else [args.dataset]
+        for target in targets:
+            if target == "sage":
+                indices.append(preprocess_sage_dataset())
+            elif target == "scenesmith":
+                indices.append(preprocess_scenesmith_dataset())
+        catalog = write_dataset_catalog(indices)
+        print(json.dumps(catalog, indent=2))
+        return
+
     spec = DATASETS[args.dataset]
     subsets = _selected_subsets(spec, args.subsets)
     destination, manifests_dir = _resolve_paths(args, spec)
