@@ -487,14 +487,13 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.command == "preprocess":
-        indices = []
         targets = sorted(DATASETS) if args.dataset == "all" else [args.dataset]
         for target in targets:
             if target == "sage":
-                indices.append(preprocess_sage_dataset())
+                preprocess_sage_dataset()
             elif target == "scenesmith":
-                indices.append(preprocess_scenesmith_dataset())
-        catalog = write_dataset_catalog(indices)
+                preprocess_scenesmith_dataset()
+        catalog = write_dataset_catalog()
         print(json.dumps(catalog, indent=2))
         return
 

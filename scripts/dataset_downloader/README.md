@@ -104,6 +104,9 @@ uv run dataset-downloader download scenesmith --subset all --sample-size 8 --dry
 
 ## Preprocess
 
+`assets/preprocessed/*` is treated as generated output. It is ignored by git and
+should be regenerated locally by each developer instead of being committed.
+
 Write normalized scene manifests to:
 
 - `/data/L202500274/SceneViewer/assets/preprocessed/sage`
@@ -121,6 +124,12 @@ Or regenerate everything plus a shared dataset catalog:
 ```bash
 uv run dataset-downloader preprocess all
 ```
+
+Each preprocess run rebuilds that dataset's output folder from scratch before
+writing fresh manifests. The shared `assets/preprocessed/datasets.json` catalog
+is rebuilt from whichever dataset `index.json` files currently exist on disk, so
+rerunning `preprocess scenesmith` will not drop an already-generated `sage`
+entry.
 
 The preprocessor is tolerant of partially downloaded scenes. If a scene is missing
 critical files, it is recorded under `skipped_scenes` in the dataset `index.json`

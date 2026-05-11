@@ -61,12 +61,14 @@ source = { editable = "." }
 dependencies = [
     { name = "httpx", extra = ["socks"] },
     { name = "huggingface-hub" },
+    { name = "pyyaml" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "httpx", extras = ["socks"], specifier = ">=0.28.1,<1" },
     { name = "huggingface-hub", specifier = ">=0.32.0" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
 ]
 
 [[package]]
