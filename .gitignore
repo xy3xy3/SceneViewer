@@ -1,2 +1,4 @@
 refrepo/*
 !refrepo/.gitkeep
+assets/*
+!assets/.gitkeep

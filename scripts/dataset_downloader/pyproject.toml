@@ -1,0 +1,20 @@
+[project]
+name = "dataset-downloader"
+version = "0.1.0"
+description = "Sample and download SAGE / SceneSmith scene archives for local preview prep"
+readme = "README.md"
+authors = [
+    { name = "xy3", email = "120182408@qq.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "huggingface-hub>=0.32.0",
+    "httpx[socks]>=0.28.1,<1",
+]
+
+[project.scripts]
+dataset-downloader = "dataset_downloader:main"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"
