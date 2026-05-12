@@ -34,6 +34,7 @@ from pygltflib import (
     VEC2,
     VEC3,
 )
+from tqdm.auto import tqdm
 
 from .config import DATASETS, PREPROCESSED_ROOT, RENDERABLE_ROOT, REPO_ROOT
 
@@ -54,15 +55,33 @@ def _repo_path(path: Path) -> str:
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n")
+    temp_path = path.with_suffix(f"{path.suffix}.tmp")
+    temp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n")
+    temp_path.replace(path)
 
 
 def _read_json(path: Path) -> dict[str, object]:
     return json.loads(path.read_text())
 
 
+def _scene_progress(
+    dataset: str,
+    scene_summaries: list[dict[str, object]],
+):
+    return tqdm(
+        scene_summaries,
+        desc=f"renderable {dataset}",
+        unit="scene",
+        dynamic_ncols=True,
+    )
+
+
 def _preprocessed_index_path(dataset: str) -> Path:
     return PREPROCESSED_ROOT / dataset / "index.json"
+
+
+def _renderable_index_path(dataset: str) -> Path:
+    return RENDERABLE_ROOT / dataset / "index.json"
 
 
 def _sage_renderable_scene_output(scene_id: str) -> Path:
@@ -112,6 +131,48 @@ def _scene_uid_sort_key(scene_uid: str) -> tuple[str, str]:
     if len(parts) >= 3:
         return parts[-2], parts[-1]
     return "", scene_uid
+
+
+def _build_renderable_index(
+    *,
+    dataset: str,
+    scenes: list[dict[str, object]],
+    source_scene_count: int,
+    status: str,
+    shared_asset_count: int | None = None,
+) -> dict[str, object]:
+    index = {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at_utc": _now_utc(),
+        "dataset": dataset,
+        "status": status,
+        "scene_count": len(scenes),
+        "source_scene_count": source_scene_count,
+        "scenes": sorted(scenes, key=lambda item: _scene_uid_sort_key(item["scene_uid"])),
+    }
+    if shared_asset_count is not None:
+        index["shared_asset_count"] = shared_asset_count
+    return index
+
+
+def _write_renderable_progress(
+    *,
+    dataset: str,
+    scenes: list[dict[str, object]],
+    source_scene_count: int,
+    status: str,
+    shared_asset_count: int | None = None,
+) -> dict[str, object]:
+    index = _build_renderable_index(
+        dataset=dataset,
+        scenes=scenes,
+        source_scene_count=source_scene_count,
+        status=status,
+        shared_asset_count=shared_asset_count,
+    )
+    _write_json(_renderable_index_path(dataset), index)
+    write_renderable_catalog()
+    return index
 
 
 def _scenesmith_shell_id(asset_path: str) -> str:
@@ -396,8 +457,18 @@ def build_sage_renderables() -> dict[str, object]:
     shared_assets: dict[str, dict[str, object]] = {}
     scenes: list[dict[str, object]] = []
 
-    for scene_summary in source_index.get("scenes", []):
+    scene_summaries = list(source_index.get("scenes", []))
+    _write_renderable_progress(
+        dataset=dataset,
+        scenes=scenes,
+        source_scene_count=len(scene_summaries),
+        status="in_progress",
+        shared_asset_count=len(shared_assets),
+    )
+    progress = _scene_progress(dataset, scene_summaries)
+    for scene_summary in progress:
         summary = dict(scene_summary)
+        progress.set_postfix_str(summary.get("scene_uid", summary.get("scene_id", "")), refresh=False)
         scene_manifest_path = REPO_ROOT / summary["scene_manifest"]
         scene_manifest = _read_json(scene_manifest_path)
         scene_id = scene_manifest["scene_id"]
@@ -504,17 +575,21 @@ def build_sage_renderables() -> dict[str, object]:
                 "room_count": len(renderable_rooms),
             }
         )
+        _write_renderable_progress(
+            dataset=dataset,
+            scenes=scenes,
+            source_scene_count=len(scene_summaries),
+            status="in_progress",
+            shared_asset_count=len(shared_assets),
+        )
 
-    index = {
-        "schema_version": SCHEMA_VERSION,
-        "generated_at_utc": _now_utc(),
-        "dataset": dataset,
-        "scene_count": len(scenes),
-        "shared_asset_count": len(shared_assets),
-        "scenes": sorted(scenes, key=lambda item: _scene_uid_sort_key(item["scene_uid"])),
-    }
-    _write_json(output_root / "index.json", index)
-    return index
+    return _write_renderable_progress(
+        dataset=dataset,
+        scenes=scenes,
+        source_scene_count=len(scene_summaries),
+        status="ready",
+        shared_asset_count=len(shared_assets),
+    )
 
 
 def _scenesmith_rotation_y_deg(object_data: dict[str, object]) -> float:
@@ -544,8 +619,17 @@ def build_scenesmith_renderables() -> dict[str, object]:
     source_index = _read_json(source_index_path)
     scenes: list[dict[str, object]] = []
 
-    for scene_summary in source_index.get("scenes", []):
+    scene_summaries = list(source_index.get("scenes", []))
+    _write_renderable_progress(
+        dataset=dataset,
+        scenes=scenes,
+        source_scene_count=len(scene_summaries),
+        status="in_progress",
+    )
+    progress = _scene_progress(dataset, scene_summaries)
+    for scene_summary in progress:
         summary = dict(scene_summary)
+        progress.set_postfix_str(summary.get("scene_uid", summary.get("scene_id", "")), refresh=False)
         scene_manifest_path = REPO_ROOT / summary["scene_manifest"]
         scene_manifest = _read_json(scene_manifest_path)
         subset = scene_manifest["subset"]
@@ -627,16 +711,19 @@ def build_scenesmith_renderables() -> dict[str, object]:
                 "room_shell_count": len(room_shells),
             }
         )
+        _write_renderable_progress(
+            dataset=dataset,
+            scenes=scenes,
+            source_scene_count=len(scene_summaries),
+            status="in_progress",
+        )
 
-    index = {
-        "schema_version": SCHEMA_VERSION,
-        "generated_at_utc": _now_utc(),
-        "dataset": dataset,
-        "scene_count": len(scenes),
-        "scenes": sorted(scenes, key=lambda item: _scene_uid_sort_key(item["scene_uid"])),
-    }
-    _write_json(output_root / "index.json", index)
-    return index
+    return _write_renderable_progress(
+        dataset=dataset,
+        scenes=scenes,
+        source_scene_count=len(scene_summaries),
+        status="ready",
+    )
 
 
 def write_renderable_catalog() -> dict[str, object]:
@@ -651,6 +738,8 @@ def write_renderable_catalog() -> dict[str, object]:
                 "dataset": dataset,
                 "scene_count": index["scene_count"],
                 "index_path": _repo_path(index_path),
+                "source_scene_count": index.get("source_scene_count"),
+                "status": index.get("status", "ready"),
             }
         )
 

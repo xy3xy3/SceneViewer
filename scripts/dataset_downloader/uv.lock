@@ -78,6 +78,7 @@ dependencies = [
     { name = "plyfile" },
     { name = "pygltflib" },
     { name = "pyyaml" },
+    { name = "tqdm" },
 ]
 
 [package.metadata]
@@ -88,6 +89,7 @@ requires-dist = [
     { name = "plyfile", specifier = ">=1.1.2" },
     { name = "pygltflib", specifier = ">=1.16.5" },
     { name = "pyyaml", specifier = ">=6.0.2" },
+    { name = "tqdm", specifier = ">=4.67.1" },
 ]
 
 [[package]]
