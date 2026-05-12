@@ -241,6 +241,100 @@ a {
   min-height: 0;
 }
 
+.canvas-progress {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: rgba(2, 6, 23, 0.84);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(16px);
+}
+
+.canvas-progress.is-ready {
+  border-color: rgba(34, 197, 94, 0.24);
+}
+
+.canvas-progress-header,
+.canvas-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.canvas-progress-header strong,
+.canvas-progress-header span,
+.canvas-progress-meta span {
+  display: block;
+}
+
+.canvas-progress-header strong {
+  font-size: 0.9rem;
+  color: #f8fafc;
+}
+
+.canvas-progress-header span,
+.canvas-progress-meta span {
+  font-size: 0.76rem;
+  color: #94a3b8;
+}
+
+.canvas-progress-meta span:first-child {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-progress-bar {
+  position: relative;
+  height: 7px;
+  overflow: hidden;
+  background: rgba(15, 23, 42, 0.96);
+}
+
+.canvas-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #38bdf8 0%, #22c55e 100%);
+  transition: width 180ms ease;
+}
+
+.canvas-progress-stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.canvas-progress-stage {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #64748b;
+  font-size: 0.72rem;
+  background: rgba(15, 23, 42, 0.82);
+}
+
+.canvas-progress-stage.is-current {
+  color: #e2e8f0;
+  border-color: rgba(56, 189, 248, 0.45);
+  background: rgba(14, 116, 144, 0.2);
+}
+
+.canvas-progress-stage.is-done {
+  color: #bbf7d0;
+  border-color: rgba(34, 197, 94, 0.35);
+  background: rgba(20, 83, 45, 0.28);
+}
+
 .canvas-shell canvas {
   width: 100% !important;
   height: 100% !important;
@@ -549,6 +643,26 @@ a {
   .scene-switch-button {
     width: 36px;
     height: 36px;
+  }
+
+  .canvas-progress,
+  .canvas-caption {
+    left: 12px;
+    right: 12px;
+  }
+
+  .canvas-progress {
+    top: 12px;
+    padding: 10px 12px;
+  }
+
+  .canvas-progress-meta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .canvas-progress-stages {
+    gap: 6px;
   }
 
   .metric-grid,

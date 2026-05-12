@@ -9,6 +9,7 @@ import {
   OrbitControls,
   useBounds,
   useGLTF,
+  useProgress,
   useTexture,
 } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
@@ -82,6 +83,41 @@ type ObjectLabelPlacement = {
 type InspectableObject = ObjectLabelPlacement & {
   size: Vector3Tuple;
 };
+
+type BatchProgressSnapshot = {
+  readyCount: number;
+  visibleCount: number;
+  totalCount: number;
+  complete: boolean;
+};
+
+type ResourceProgressSnapshot = {
+  active: boolean;
+  item: string;
+  loaded: number;
+  total: number;
+  progress: number;
+};
+
+type RenderProgressSnapshot = {
+  ready: boolean;
+  stage: string;
+  detail: string;
+  completed: number;
+  total: number;
+  progress: number;
+};
+
+type ProgressStageId = "download" | "parse" | "mount" | "ready";
+
+function createEmptyBatchProgress(totalCount = 0): BatchProgressSnapshot {
+  return {
+    readyCount: 0,
+    visibleCount: 0,
+    totalCount,
+    complete: totalCount === 0,
+  };
+}
 
 function wallToPanel(wall: SageWall): WallPanel {
   const start: Vector3Tuple = [wall.start_point.x, 0, wall.start_point.y];
@@ -421,12 +457,14 @@ function BatchedAssetModels({
   onComplete,
   onItemBounds,
   materialProfile,
+  onProgress,
 }: {
   items: AssetPlacement[];
   batchSize: number;
   onComplete?: () => void;
   onItemBounds?: (key: string, bounds: { center: Vector3Tuple; size: Vector3Tuple }) => void;
   materialProfile: MaterialProfile;
+  onProgress?: (snapshot: BatchProgressSnapshot) => void;
 }) {
   const [visibleCount, setVisibleCount] = useState(Math.min(batchSize, items.length));
   const [readyCount, setReadyCount] = useState(0);
@@ -470,6 +508,15 @@ function BatchedAssetModels({
     onComplete?.();
   }, [items.length, onComplete, readyCount]);
 
+  useEffect(() => {
+    onProgress?.({
+      readyCount,
+      visibleCount,
+      totalCount: items.length,
+      complete: items.length === 0 || readyCount >= items.length,
+    });
+  }, [items.length, onProgress, readyCount, visibleCount]);
+
   return (
     <>
       {items.slice(0, visibleCount).map((item) => (
@@ -490,6 +537,40 @@ function BatchedAssetModels({
       ))}
     </>
   );
+}
+
+function LoadingProgressReporter({
+  sceneKey,
+  onChange,
+}: {
+  sceneKey: string;
+  onChange: (snapshot: ResourceProgressSnapshot) => void;
+}) {
+  const { active, item, loaded, total, progress } = useProgress();
+
+  useEffect(() => {
+    onChange({
+      active,
+      item,
+      loaded,
+      total,
+      progress,
+    });
+  }, [active, item, loaded, onChange, progress, sceneKey, total]);
+
+  return null;
+}
+
+function formatProgressItemLabel(item: string): string {
+  const normalized = item.split("?")[0]?.split("/").filter(Boolean).pop() ?? item;
+  if (normalized.length <= 42) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 39)}...`;
+}
+
+function inferParsingState(progress: ResourceProgressSnapshot): boolean {
+  return !progress.active && progress.total > 0 && progress.loaded > 0;
 }
 
 function ObjectLabels({ items }: { items: ObjectLabelPlacement[] }) {
@@ -837,12 +918,14 @@ function PreviewContent({
   wallOpacity,
   wallDisplayMode,
   showObjectLabels,
+  onRenderProgressChange,
 }: {
   scene: SceneManifest | null;
   renderScene: RenderableSceneManifest;
   wallOpacity: number;
   wallDisplayMode: "solid" | "transparent" | "hidden" | "wireframe";
   showObjectLabels: boolean;
+  onRenderProgressChange: (snapshot: RenderProgressSnapshot) => void;
 }) {
   const dataset = renderScene.dataset;
   const [fitVersion, setFitVersion] = useState(0);
@@ -852,6 +935,15 @@ function PreviewContent({
   const [measuredObjectBounds, setMeasuredObjectBounds] = useState<
     Record<string, { center: Vector3Tuple; size: Vector3Tuple }>
   >({});
+  const [sageBatchProgress, setSageBatchProgress] = useState<BatchProgressSnapshot>(
+    createEmptyBatchProgress(),
+  );
+  const [shellBatchProgress, setShellBatchProgress] = useState<BatchProgressSnapshot>(
+    createEmptyBatchProgress(),
+  );
+  const [objectBatchProgress, setObjectBatchProgress] = useState<BatchProgressSnapshot>(
+    createEmptyBatchProgress(),
+  );
   const sageAssets = useMemo(() => {
     if (dataset !== "sage") {
       return [];
@@ -999,6 +1091,19 @@ function PreviewContent({
   }, [hoveredObjectId, inspectableObjects, selectedObjectId, showObjectLabels]);
 
   useEffect(() => {
+    if (dataset === "sage") {
+      setSageBatchProgress(createEmptyBatchProgress(sageAssets.length));
+      setShellBatchProgress(createEmptyBatchProgress());
+      setObjectBatchProgress(createEmptyBatchProgress());
+      return;
+    }
+
+    setSageBatchProgress(createEmptyBatchProgress());
+    setShellBatchProgress(createEmptyBatchProgress(scenesmithShellAssets.length));
+    setObjectBatchProgress(createEmptyBatchProgress(scenesmithObjectAssets.length));
+  }, [dataset, renderScene.scene_uid, sageAssets.length, scenesmithObjectAssets.length, scenesmithShellAssets.length]);
+
+  useEffect(() => {
     setScenesmithShellsReady(dataset !== "scenesmith" || scenesmithShellCount === 0);
     setFitVersion((current) => current + 1);
   }, [dataset, renderScene.scene_uid, scenesmithShellCount]);
@@ -1009,6 +1114,74 @@ function PreviewContent({
     setMeasuredObjectBounds({});
     document.body.style.cursor = "default";
   }, [renderScene.scene_uid]);
+
+  useEffect(() => {
+    if (dataset === "sage") {
+      const total = sageAssets.length;
+      const completed = Math.min(sageBatchProgress.readyCount, total);
+      const ready = total === 0 || sageBatchProgress.complete;
+      const progress = total === 0 ? 100 : Math.round((completed / total) * 100);
+      onRenderProgressChange({
+        ready,
+        stage: ready ? "Scene ready" : "Preparing objects",
+        detail:
+          total === 0
+            ? "No object assets need staged rendering"
+            : `Mounted ${completed}/${total} object assets`,
+        completed,
+        total,
+        progress,
+      });
+      return;
+    }
+
+    const shellCompleted = Math.min(shellBatchProgress.readyCount, scenesmithShellAssets.length);
+    const objectCompleted = Math.min(objectBatchProgress.readyCount, scenesmithObjectAssets.length);
+    const total = scenesmithShellAssets.length + scenesmithObjectAssets.length;
+    const completed = shellCompleted + (scenesmithShellsReady ? objectCompleted : 0);
+    const ready =
+      (scenesmithShellAssets.length === 0 || shellBatchProgress.complete) &&
+      (scenesmithObjectAssets.length === 0 || objectBatchProgress.complete);
+    const progress = total === 0 ? 100 : Math.round((completed / total) * 100);
+
+    let stage = "Scene ready";
+    let detail = "All room shells and objects are mounted";
+    if (!scenesmithShellsReady) {
+      stage = "Preparing room shells";
+      detail =
+        scenesmithShellAssets.length === 0
+          ? "No room shell assets to stage"
+          : `Mounted ${shellCompleted}/${scenesmithShellAssets.length} room shell assets`;
+    } else if (!ready) {
+      stage = "Preparing objects";
+      detail =
+        scenesmithObjectAssets.length === 0
+          ? "No object assets to stage"
+          : `Mounted ${objectCompleted}/${scenesmithObjectAssets.length} object assets`;
+    }
+
+    onRenderProgressChange({
+      ready,
+      stage,
+      detail,
+      completed,
+      total,
+      progress,
+    });
+  }, [
+    dataset,
+    objectBatchProgress.complete,
+    objectBatchProgress.readyCount,
+    onRenderProgressChange,
+    sageAssets.length,
+    sageBatchProgress.complete,
+    sageBatchProgress.readyCount,
+    scenesmithObjectAssets.length,
+    scenesmithShellAssets.length,
+    scenesmithShellsReady,
+    shellBatchProgress.complete,
+    shellBatchProgress.readyCount,
+  ]);
 
   function handleObjectSelect(id: string, additive: boolean) {
     setSelectedObjectId((current) => {
@@ -1088,6 +1261,7 @@ function PreviewContent({
                 batchSize={24}
                 onItemBounds={handleObjectBounds}
                 materialProfile="sage"
+                onProgress={setSageBatchProgress}
               />
               <ObjectHitTargets
                 items={inspectableObjects}
@@ -1108,6 +1282,7 @@ function PreviewContent({
                 items={scenesmithShellAssets}
                 batchSize={24}
                 materialProfile="scenesmith"
+                onProgress={setShellBatchProgress}
                 onComplete={() => {
                   setScenesmithShellsReady(true);
                   setFitVersion((current) => current + 1);
@@ -1120,6 +1295,7 @@ function PreviewContent({
                     batchSize={20}
                     onItemBounds={handleObjectBounds}
                     materialProfile="scenesmith"
+                    onProgress={setObjectBatchProgress}
                   />
                   <ObjectHitTargets
                     items={inspectableObjects}
@@ -1150,6 +1326,59 @@ export function ScenePreviewCanvas({
   wallDisplayMode,
   showObjectLabels,
 }: ScenePreviewCanvasProps) {
+  const [resourceProgress, setResourceProgress] = useState<ResourceProgressSnapshot>({
+    active: false,
+    item: "",
+    loaded: 0,
+    total: 0,
+    progress: 100,
+  });
+  const [renderProgress, setRenderProgress] = useState<RenderProgressSnapshot>({
+    ready: false,
+    stage: "Waiting for scene",
+    detail: "Choose a scene to start rendering",
+    completed: 0,
+    total: 0,
+    progress: 0,
+  });
+
+  useEffect(() => {
+    if (!renderScene) {
+      setResourceProgress({
+        active: false,
+        item: "",
+        loaded: 0,
+        total: 0,
+        progress: 0,
+      });
+      setRenderProgress({
+        ready: false,
+        stage: "Loading scene data",
+        detail: "Waiting for renderable scene manifest",
+        completed: 0,
+        total: 0,
+        progress: 0,
+      });
+      return;
+    }
+
+    setResourceProgress({
+      active: false,
+      item: "",
+      loaded: 0,
+      total: 0,
+      progress: 100,
+    });
+    setRenderProgress({
+      ready: false,
+      stage: "Preparing scene",
+      detail: "Initializing asset batches",
+      completed: 0,
+      total: 0,
+      progress: 0,
+    });
+  }, [renderScene?.scene_uid]);
+
   if (!scene && !renderScene) {
     return (
       <div className="canvas-empty">
@@ -1171,21 +1400,110 @@ export function ScenePreviewCanvas({
     dataset === "sage"
       ? `SAGE: ${renderScene.objects.length} textured objects`
       : `SceneSmith: ${renderScene.room_shells.length} room shells + ${renderScene.objects.length} objects`;
+  const resourceActive = resourceProgress.active && resourceProgress.total > 0;
+  const resourceValue =
+    resourceProgress.total > 0
+      ? Math.max(0, Math.min(100, Math.round(resourceProgress.progress)))
+      : resourceActive
+        ? Math.max(0, Math.min(100, Math.round(resourceProgress.progress)))
+        : 100;
+  const renderValue = Math.max(0, Math.min(100, Math.round(renderProgress.progress)));
+  const overallProgress = Math.round(resourceValue * 0.45 + renderValue * 0.55);
+  const previewReady = !resourceActive && renderProgress.ready;
+  const parsingActive = inferParsingState(resourceProgress) && !renderProgress.ready && renderValue === 0;
+  const currentStage: ProgressStageId = previewReady
+    ? "ready"
+    : resourceActive
+      ? "download"
+      : parsingActive
+        ? "parse"
+        : "mount";
+  const statusTitle =
+    currentStage === "download"
+      ? "Downloading assets"
+      : currentStage === "parse"
+        ? "Parsing models"
+        : currentStage === "mount"
+          ? "Mounting scene"
+          : "Scene ready";
+  const statusDetail =
+    currentStage === "download"
+    ? `${
+        resourceProgress.loaded && resourceProgress.total
+          ? `${resourceProgress.loaded}/${resourceProgress.total} files`
+          : "Fetching textures and models"
+      }${resourceProgress.item ? ` · ${formatProgressItemLabel(resourceProgress.item)}` : ""}`
+    : currentStage === "parse"
+      ? "Assets downloaded, preparing geometry and materials"
+      : renderProgress.detail;
 
   return (
     <div className="canvas-shell">
+      <div className={`canvas-progress ${previewReady ? "is-ready" : "is-busy"}`}>
+        <div className="canvas-progress-header">
+          <strong>{statusTitle}</strong>
+          <span>{previewReady ? "Ready" : `${overallProgress}%`}</span>
+        </div>
+        <div
+          className="canvas-progress-bar"
+          role="progressbar"
+          aria-label="Scene preview loading progress"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={overallProgress}
+        >
+          <div className="canvas-progress-fill" style={{ width: `${overallProgress}%` }} />
+        </div>
+        <div className="canvas-progress-meta">
+          <span>{statusDetail}</span>
+          <span>{`Downloading assets -> Parsing models -> Mounting scene`}</span>
+        </div>
+        <div className="canvas-progress-stages" aria-hidden="true">
+          <span
+            className={`canvas-progress-stage ${
+              currentStage === "download" ? "is-current" : resourceActive ? "is-current" : "is-done"
+            }`}
+          >
+            Downloading assets
+          </span>
+          <span
+            className={`canvas-progress-stage ${
+              currentStage === "parse"
+                ? "is-current"
+                : currentStage === "mount" || currentStage === "ready"
+                  ? "is-done"
+                  : ""
+            }`}
+          >
+            Parsing models
+          </span>
+          <span
+            className={`canvas-progress-stage ${
+              currentStage === "mount"
+                ? "is-current"
+                : currentStage === "ready"
+                  ? "is-done"
+                  : ""
+            }`}
+          >
+            Mounting scene
+          </span>
+        </div>
+      </div>
       <Canvas
         shadows
         camera={{ position: [8, 7, 8], fov: 42, near: 0.1, far: 300 }}
         gl={{ antialias: true }}
       >
         <color attach="background" args={["#020617"]} />
+        <LoadingProgressReporter sceneKey={renderScene.scene_uid} onChange={setResourceProgress} />
         <PreviewContent
           scene={scene}
           renderScene={renderScene}
           wallOpacity={wallOpacity}
           wallDisplayMode={wallDisplayMode}
           showObjectLabels={showObjectLabels}
+          onRenderProgressChange={setRenderProgress}
         />
         <OrbitControls
           makeDefault
