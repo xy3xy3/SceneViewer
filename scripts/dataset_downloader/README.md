@@ -182,7 +182,7 @@ uv run dataset-downloader preprocess scenesmith
 ### 4. 生成 renderable 数据
 
 ```bash
-uv run dataset-downloader renderable scenesmith
+uv run dataset-downloader preprocess scenesmith
 ```
 
 这一步会基于 `assets/preprocessed/scenesmith/` 生成前端可直接消费的渲染数据，输出到：
