@@ -108,7 +108,8 @@ a {
   min-width: 300px;
 }
 
-.select-shell span {
+.select-shell span,
+.control-shell span {
   font-size: 0.76rem;
   text-transform: uppercase;
   letter-spacing: 0;
@@ -123,6 +124,57 @@ a {
   color: #e2e8f0;
   padding: 0 12px;
   outline: none;
+}
+
+.control-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 180px;
+}
+
+.control-shell-range {
+  min-width: 220px;
+}
+
+.range-control,
+.toggle-control {
+  height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(15, 23, 42, 0.9);
+  color: #e2e8f0;
+}
+
+.range-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 0 12px;
+}
+
+.range-control input[type="range"] {
+  width: 100%;
+  accent-color: #38bdf8;
+}
+
+.range-control strong,
+.toggle-control strong {
+  font-size: 0.82rem;
+  color: #cbd5e1;
+}
+
+.toggle-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+}
+
+.toggle-control input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #38bdf8;
 }
 
 .workspace {
@@ -242,6 +294,21 @@ a {
   padding: 0 10px;
   background: rgba(56, 189, 248, 0.12);
   color: #bae6fd !important;
+}
+
+.object-label {
+  max-width: 132px;
+  padding: 4px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(2, 6, 23, 0.84);
+  color: #e2e8f0;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  box-shadow: 0 8px 30px rgba(2, 6, 23, 0.35);
 }
 
 .canvas-empty {

@@ -2,7 +2,9 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bounds,
   Environment,
+  Edges,
   Grid,
+  Html,
   Lightformer,
   OrbitControls,
   useBounds,
@@ -10,6 +12,7 @@ import {
   useTexture,
 } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
+import type { ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
 import { toRepoAssetUrl } from "../lib/repoAssets";
 import type {
@@ -25,6 +28,9 @@ import type {
 interface ScenePreviewCanvasProps {
   scene: SceneManifest | null;
   renderScene: RenderableSceneManifest | null;
+  wallOpacity: number;
+  wallDisplayMode: "solid" | "transparent" | "hidden" | "wireframe";
+  showObjectLabels: boolean;
 }
 
 type Vector3Tuple = [number, number, number];
@@ -55,6 +61,9 @@ type AssetPlacement = {
   position: Vector3Tuple;
   rotationYDeg: number;
   scale: Vector3Tuple;
+  opacity?: number;
+  wireframe?: boolean;
+  visible?: boolean;
 };
 
 type SceneBounds = {
@@ -63,6 +72,16 @@ type SceneBounds = {
 };
 
 type MaterialProfile = "sage" | "scenesmith";
+
+type ObjectLabelPlacement = {
+  id: string;
+  label: string;
+  position: Vector3Tuple;
+};
+
+type InspectableObject = ObjectLabelPlacement & {
+  size: Vector3Tuple;
+};
 
 function wallToPanel(wall: SageWall): WallPanel {
   const start: Vector3Tuple = [wall.start_point.x, 0, wall.start_point.y];
@@ -129,7 +148,12 @@ function computeRoomFootprint(room: RenderableSageRoom): RoomFootprint {
   };
 }
 
-function prepareScene(root: THREE.Object3D, profile: MaterialProfile): THREE.Object3D {
+function prepareScene(
+  root: THREE.Object3D,
+  profile: MaterialProfile,
+  opacity = 1,
+  wireframe = false,
+): THREE.Object3D {
   const clone = root.clone(true);
   clone.traverse((child) => {
     if (child instanceof THREE.Mesh) {
@@ -166,6 +190,13 @@ function prepareScene(root: THREE.Object3D, profile: MaterialProfile): THREE.Obj
           material.envMapIntensity = 0.9;
           material.side = THREE.FrontSide;
         }
+        material.transparent = opacity < 0.999;
+        material.opacity = opacity;
+        material.depthWrite = opacity >= 0.55;
+        material.wireframe = wireframe;
+        if (opacity < 0.999) {
+          material.side = THREE.DoubleSide;
+        }
         return material;
       });
 
@@ -174,6 +205,42 @@ function prepareScene(root: THREE.Object3D, profile: MaterialProfile): THREE.Obj
     }
   });
   return clone;
+}
+
+function sceneSmithToThree(vector: [number, number, number]): Vector3Tuple {
+  return [vector[0], vector[2], vector[1]];
+}
+
+function labelText(value: string | null | undefined, fallback: string): string {
+  const text = (value || "").trim();
+  if (!text) {
+    return fallback;
+  }
+  if (text.length <= 28) {
+    return text;
+  }
+  return `${text.slice(0, 25)}...`;
+}
+
+function compactSceneSmithName(
+  value: string | null | undefined,
+  roomId?: string | null,
+): string | null {
+  const text = (value || "").trim();
+  if (!text) {
+    return null;
+  }
+
+  let next = text;
+  if (roomId) {
+    const prefix = `${roomId}_`;
+    if (next.startsWith(prefix)) {
+      next = next.slice(prefix.length);
+    }
+  }
+
+  next = next.replace(/_\d+$/, "");
+  return next || text || null;
 }
 
 function PreviewEnvironment() {
@@ -244,15 +311,27 @@ function TexturedFloor({
 function TexturedWall({
   panel,
   textureUrl,
+  opacity,
+  wireframe,
 }: {
   panel: WallPanel;
   textureUrl: string;
+  opacity: number;
+  wireframe: boolean;
 }) {
   const texture = useTiledTexture(textureUrl, panel.size[0] / 1.2, panel.size[1] / 1.2);
   return (
     <mesh position={panel.position} rotation={[0, -panel.rotationY, 0]} castShadow receiveShadow>
       <boxGeometry args={panel.size} />
-      <meshStandardMaterial map={texture} roughness={0.96} metalness={0.02} />
+      <meshStandardMaterial
+        map={texture}
+        roughness={0.96}
+        metalness={0.02}
+        transparent={opacity < 0.999}
+        opacity={opacity}
+        depthWrite={opacity >= 0.55}
+        wireframe={wireframe}
+      />
     </mesh>
   );
 }
@@ -263,14 +342,22 @@ function AssetModel({
   rotationYDeg,
   scale,
   onReady,
+  onBounds,
   materialProfile,
+  opacity,
+  wireframe,
+  visible = true,
 }: {
   assetPath: string;
   position: Vector3Tuple;
   rotationYDeg: number;
   scale: Vector3Tuple;
   onReady?: () => void;
+  onBounds?: (bounds: { center: Vector3Tuple; size: Vector3Tuple }) => void;
   materialProfile: MaterialProfile;
+  opacity?: number;
+  wireframe?: boolean;
+  visible?: boolean;
 }) {
   const url = toRepoAssetUrl(assetPath);
   if (!url) {
@@ -278,19 +365,53 @@ function AssetModel({
   }
 
   const gltf = useGLTF(url);
-  const object = useMemo(() => prepareScene(gltf.scene, materialProfile), [gltf.scene, materialProfile]);
+  const groupRef = useRef<THREE.Group | null>(null);
+  const object = useMemo(
+    () => prepareScene(gltf.scene, materialProfile, opacity ?? 1, wireframe ?? false),
+    [gltf.scene, materialProfile, opacity, wireframe],
+  );
 
   useEffect(() => {
     onReady?.();
   }, [onReady]);
 
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group || !onBounds) {
+      return;
+    }
+
+    group.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(group);
+    if (box.isEmpty()) {
+      return;
+    }
+
+    const center = new THREE.Vector3();
+    const size = new THREE.Vector3();
+    box.getCenter(center);
+    box.getSize(size);
+
+    onBounds({
+      center: [center.x, center.y, center.z],
+      size: [
+        Math.max(size.x, 0.18),
+        Math.max(size.y, 0.18),
+        Math.max(size.z, 0.18),
+      ],
+    });
+  }, [object, onBounds, position, rotationYDeg, scale]);
+
   return (
-    <primitive
-      object={object}
+    <group
+      ref={groupRef}
+      visible={visible}
       position={position}
       rotation={[0, THREE.MathUtils.degToRad(rotationYDeg), 0]}
       scale={scale}
-    />
+    >
+      <primitive object={object} />
+    </group>
   );
 }
 
@@ -298,11 +419,13 @@ function BatchedAssetModels({
   items,
   batchSize,
   onComplete,
+  onItemBounds,
   materialProfile,
 }: {
   items: AssetPlacement[];
   batchSize: number;
   onComplete?: () => void;
+  onItemBounds?: (key: string, bounds: { center: Vector3Tuple; size: Vector3Tuple }) => void;
   materialProfile: MaterialProfile;
 }) {
   const [visibleCount, setVisibleCount] = useState(Math.min(batchSize, items.length));
@@ -357,9 +480,118 @@ function BatchedAssetModels({
             rotationYDeg={item.rotationYDeg}
             scale={item.scale}
             onReady={() => handleReady(item.key)}
+            onBounds={onItemBounds ? (bounds) => onItemBounds(item.key, bounds) : undefined}
             materialProfile={materialProfile}
+            opacity={item.opacity}
+            wireframe={item.wireframe}
+            visible={item.visible}
           />
         </Suspense>
+      ))}
+    </>
+  );
+}
+
+function ObjectLabels({ items }: { items: ObjectLabelPlacement[] }) {
+  return (
+    <>
+      {items.map((item) => (
+        <group key={item.id} position={item.position}>
+          <Html transform sprite distanceFactor={8} center>
+            <div className="object-label" title={item.label}>
+              {item.label}
+            </div>
+          </Html>
+        </group>
+      ))}
+    </>
+  );
+}
+
+function SelectionOverlays({
+  items,
+  activeId,
+  hoveredId,
+}: {
+  items: InspectableObject[];
+  activeId: string | null;
+  hoveredId: string | null;
+}) {
+  return (
+    <>
+      {items
+        .filter((item) => item.id === activeId || (item.id === hoveredId && item.id !== activeId))
+        .map((item) => {
+          const isActive = item.id === activeId;
+          return (
+            <mesh key={item.id} position={item.position}>
+              <boxGeometry
+                args={[
+                  Math.max(item.size[0] + 0.06, 0.18),
+                  Math.max(item.size[1] + 0.06, 0.18),
+                  Math.max(item.size[2] + 0.06, 0.18),
+                ]}
+              />
+              <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+              <Edges
+                color={isActive ? "#38bdf8" : "#f8fafc"}
+                lineWidth={1}
+                scale={1}
+                threshold={15}
+              />
+            </mesh>
+          );
+        })}
+    </>
+  );
+}
+
+function ObjectHitTargets({
+  items,
+  activeId,
+  onHoverChange,
+  onSelect,
+}: {
+  items: InspectableObject[];
+  activeId: string | null;
+  onHoverChange: (id: string | null) => void;
+  onSelect: (id: string, additive: boolean) => void;
+}) {
+  return (
+    <>
+      {items.map((item) => (
+        <mesh
+          key={item.id}
+          position={item.position}
+          onPointerOver={(event: ThreeEvent<PointerEvent>) => {
+            event.stopPropagation();
+            onHoverChange(item.id);
+            document.body.style.cursor = "pointer";
+          }}
+          onPointerOut={(event: ThreeEvent<PointerEvent>) => {
+            event.stopPropagation();
+            onHoverChange(null);
+            document.body.style.cursor = "default";
+          }}
+          onClick={(event: ThreeEvent<MouseEvent>) => {
+            event.stopPropagation();
+            onSelect(item.id, Boolean(event.nativeEvent.ctrlKey || event.nativeEvent.metaKey));
+          }}
+        >
+          <boxGeometry
+            args={[
+              Math.max(item.size[0], 0.24),
+              Math.max(item.size[1], 0.24),
+              Math.max(item.size[2], 0.24),
+            ]}
+          />
+          <meshBasicMaterial
+            transparent
+            opacity={activeId === item.id ? 0.04 : 0}
+            color="#38bdf8"
+            depthWrite={false}
+          />
+        </mesh>
       ))}
     </>
   );
@@ -486,11 +718,23 @@ function computeSceneBounds(
   return finalizeBounds(min, max);
 }
 
-function SageRoomShell({ room }: { room: RenderableSageRoom }) {
+function SageRoomShell({
+  room,
+  wallOpacity,
+  wallDisplayMode,
+}: {
+  room: RenderableSageRoom;
+  wallOpacity: number;
+  wallDisplayMode: "solid" | "transparent" | "hidden" | "wireframe";
+}) {
   const footprint = useMemo(() => computeRoomFootprint(room), [room]);
   const wallPanels = useMemo(() => room.walls.map((wall) => wallToPanel(wall)), [room.walls]);
   const floorTextureUrl = toRepoAssetUrl(room.floor_texture_path);
   const wallTextureUrl = toRepoAssetUrl(room.wall_texture_path);
+  const wallOpacityValue =
+    wallDisplayMode === "solid" ? 1 : wallDisplayMode === "hidden" ? 0 : wallOpacity;
+  const wallWireframe = wallDisplayMode === "wireframe";
+  const wallVisible = wallDisplayMode !== "hidden";
 
   return (
     <group>
@@ -507,9 +751,16 @@ function SageRoomShell({ room }: { room: RenderableSageRoom }) {
         </mesh>
       )}
 
-      {wallPanels.map((panel) =>
+      {wallVisible
+        ? wallPanels.map((panel) =>
         wallTextureUrl ? (
-          <TexturedWall key={panel.id} panel={panel} textureUrl={wallTextureUrl} />
+          <TexturedWall
+            key={panel.id}
+            panel={panel}
+            textureUrl={wallTextureUrl}
+            opacity={wallOpacityValue}
+            wireframe={wallWireframe}
+          />
         ) : (
           <mesh
             key={panel.id}
@@ -519,10 +770,18 @@ function SageRoomShell({ room }: { room: RenderableSageRoom }) {
             receiveShadow
           >
             <boxGeometry args={panel.size} />
-            <meshStandardMaterial color="#cbd5e1" roughness={0.95} />
+            <meshStandardMaterial
+              color="#cbd5e1"
+              roughness={0.95}
+              transparent={wallOpacityValue < 0.999}
+              opacity={wallOpacityValue}
+              depthWrite={wallOpacityValue >= 0.55}
+              wireframe={wallWireframe}
+            />
           </mesh>
         ),
-      )}
+      )
+        : null}
     </group>
   );
 }
@@ -575,13 +834,24 @@ function SageOpenings({ rooms }: { rooms: RenderableSageRoom[] }) {
 function PreviewContent({
   scene,
   renderScene,
+  wallOpacity,
+  wallDisplayMode,
+  showObjectLabels,
 }: {
   scene: SceneManifest | null;
   renderScene: RenderableSceneManifest;
+  wallOpacity: number;
+  wallDisplayMode: "solid" | "transparent" | "hidden" | "wireframe";
+  showObjectLabels: boolean;
 }) {
   const dataset = renderScene.dataset;
   const [fitVersion, setFitVersion] = useState(0);
   const [scenesmithShellsReady, setScenesmithShellsReady] = useState(dataset !== "scenesmith");
+  const [hoveredObjectId, setHoveredObjectId] = useState<string | null>(null);
+  const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
+  const [measuredObjectBounds, setMeasuredObjectBounds] = useState<
+    Record<string, { center: Vector3Tuple; size: Vector3Tuple }>
+  >({});
   const sageAssets = useMemo(() => {
     if (dataset !== "sage") {
       return [];
@@ -609,9 +879,19 @@ function PreviewContent({
         position: shell.position,
         rotationYDeg: shell.rotation_y_deg,
         scale: shell.scale,
+        opacity:
+          shell.category === "wall"
+            ? wallDisplayMode === "solid"
+              ? 1
+              : wallDisplayMode === "hidden"
+                ? 0
+                : wallOpacity
+            : 1,
+        wireframe: shell.category === "wall" && wallDisplayMode === "wireframe",
+        visible: shell.category !== "wall" || wallDisplayMode !== "hidden",
       }),
     );
-  }, [dataset, renderScene]);
+  }, [dataset, renderScene, wallDisplayMode, wallOpacity]);
 
   const scenesmithObjectAssets = useMemo(() => {
     if (dataset !== "scenesmith") {
@@ -630,11 +910,134 @@ function PreviewContent({
   }, [dataset, renderScene]);
   const sceneBounds = useMemo(() => computeSceneBounds(scene, renderScene), [renderScene, scene]);
   const scenesmithShellCount = dataset === "scenesmith" ? renderScene.room_shells.length : 0;
+  const inspectableObjects = useMemo((): InspectableObject[] => {
+    if (renderScene.dataset === "sage") {
+      return renderScene.objects.map((object) => {
+        const measured = measuredObjectBounds[object.id];
+        const size: Vector3Tuple = [
+          Math.max(object.native_size[0] * object.scale[0], 0.18),
+          Math.max(object.native_size[1] * object.scale[1], 0.18),
+          Math.max(object.native_size[2] * object.scale[2], 0.18),
+        ];
+        return {
+          id: object.id,
+          label: labelText(object.type || object.description, object.id),
+          position: measured?.center ?? object.position,
+          size: measured?.size ?? size,
+        };
+      });
+    }
+
+    const sourceObjects = new Map((scene?.normalized.objects ?? []).map((object) => [object.id, object] as const));
+    return renderScene.objects.map((object) => {
+      const measured = measuredObjectBounds[object.id];
+      const sourceObject = sourceObjects.get(object.id);
+      const bboxMin = sourceObject?.bbox_min ?? null;
+      const bboxMax = sourceObject?.bbox_max ?? null;
+      const preferredLabel =
+        compactSceneSmithName(sourceObject?.name, sourceObject?.room_id) ||
+        compactSceneSmithName(object.description, sourceObject?.room_id) ||
+        sourceObject?.object_type ||
+        object.object_type ||
+        sourceObject?.description ||
+        object.description ||
+        object.id;
+
+      if (bboxMin && bboxMax) {
+        const centerX = (bboxMin[0] + bboxMax[0]) / 2;
+        const centerY = (bboxMin[2] + bboxMax[2]) / 2;
+        const centerZ = (bboxMin[1] + bboxMax[1]) / 2;
+        return {
+          id: object.id,
+          label: labelText(preferredLabel, object.id),
+          position: measured?.center ?? sceneSmithToThree([centerX, centerZ, centerY]),
+          size: measured?.size ?? ([
+            Math.max(Math.abs(bboxMax[0] - bboxMin[0]), 0.18),
+            Math.max(Math.abs(bboxMax[2] - bboxMin[2]), 0.18),
+            Math.max(Math.abs(bboxMax[1] - bboxMin[1]), 0.18),
+          ] as Vector3Tuple),
+        };
+      }
+
+      return {
+        id: object.id,
+        label: labelText(preferredLabel, object.id),
+        position: measured?.center ?? object.position,
+        size: measured?.size ?? ([
+          Math.max(Math.abs(object.scale[0]), 0.45),
+          Math.max(Math.abs(object.scale[1]), 0.45),
+          Math.max(Math.abs(object.scale[2]), 0.45),
+        ] as Vector3Tuple),
+      };
+    });
+  }, [measuredObjectBounds, renderScene, scene]);
+
+  const objectLabels = useMemo(() => {
+    const alwaysVisibleIds = new Set<string>();
+    if (showObjectLabels) {
+      for (const item of inspectableObjects) {
+        alwaysVisibleIds.add(item.id);
+      }
+    }
+    if (selectedObjectId) {
+      alwaysVisibleIds.add(selectedObjectId);
+    } else if (hoveredObjectId) {
+      alwaysVisibleIds.add(hoveredObjectId);
+    }
+
+    return inspectableObjects
+      .filter((item) => alwaysVisibleIds.has(item.id))
+      .map((item) => ({
+        id: item.id,
+        label: item.label,
+        position: [
+          item.position[0],
+          item.position[1] + Math.max(item.size[1] / 2 + 0.14, 0.2),
+          item.position[2],
+        ] as Vector3Tuple,
+      }));
+  }, [hoveredObjectId, inspectableObjects, selectedObjectId, showObjectLabels]);
 
   useEffect(() => {
     setScenesmithShellsReady(dataset !== "scenesmith" || scenesmithShellCount === 0);
     setFitVersion((current) => current + 1);
   }, [dataset, renderScene.scene_uid, scenesmithShellCount]);
+
+  useEffect(() => {
+    setHoveredObjectId(null);
+    setSelectedObjectId(null);
+    setMeasuredObjectBounds({});
+    document.body.style.cursor = "default";
+  }, [renderScene.scene_uid]);
+
+  function handleObjectSelect(id: string, additive: boolean) {
+    setSelectedObjectId((current) => {
+      if (additive && current === id) {
+        return null;
+      }
+      return id;
+    });
+  }
+
+  function handleObjectBounds(
+    id: string,
+    bounds: { center: Vector3Tuple; size: Vector3Tuple },
+  ) {
+    setMeasuredObjectBounds((current) => {
+      const prev = current[id];
+      if (
+        prev &&
+        prev.center.every((value, index) => Math.abs(value - bounds.center[index]) < 0.0001) &&
+        prev.size.every((value, index) => Math.abs(value - bounds.size[index]) < 0.0001)
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        [id]: bounds,
+      };
+    });
+  }
 
   return (
     <>
@@ -658,7 +1061,13 @@ function PreviewContent({
 
       <Bounds key={renderScene.scene_uid} clip observe={false} margin={1.18}>
         <SceneBoundsController sceneKey={renderScene.scene_uid} fitVersion={fitVersion} />
-        <group>
+        <group
+          onPointerMissed={() => {
+            setHoveredObjectId(null);
+            setSelectedObjectId(null);
+            document.body.style.cursor = "default";
+          }}
+        >
           <mesh position={sceneBounds.center} visible={false}>
             <boxGeometry args={sceneBounds.size} />
             <meshBasicMaterial transparent opacity={0} depthWrite={false} />
@@ -666,14 +1075,32 @@ function PreviewContent({
           {dataset === "sage" ? (
             <>
               {renderScene.rooms.map((room) => (
-                <SageRoomShell key={room.id} room={room} />
+                <SageRoomShell
+                  key={room.id}
+                  room={room}
+                  wallOpacity={wallOpacity}
+                  wallDisplayMode={wallDisplayMode}
+                />
               ))}
               <SageOpenings rooms={renderScene.rooms} />
               <BatchedAssetModels
                 items={sageAssets}
                 batchSize={24}
+                onItemBounds={handleObjectBounds}
                 materialProfile="sage"
               />
+              <ObjectHitTargets
+                items={inspectableObjects}
+                activeId={selectedObjectId}
+                onHoverChange={setHoveredObjectId}
+                onSelect={handleObjectSelect}
+              />
+              <SelectionOverlays
+                items={inspectableObjects}
+                activeId={selectedObjectId}
+                hoveredId={hoveredObjectId}
+              />
+              <ObjectLabels items={objectLabels} />
             </>
           ) : (
             <>
@@ -687,11 +1114,26 @@ function PreviewContent({
                 }}
               />
               {scenesmithShellsReady ? (
-                <BatchedAssetModels
-                  items={scenesmithObjectAssets}
-                  batchSize={20}
-                  materialProfile="scenesmith"
-                />
+                <>
+                  <BatchedAssetModels
+                    items={scenesmithObjectAssets}
+                    batchSize={20}
+                    onItemBounds={handleObjectBounds}
+                    materialProfile="scenesmith"
+                  />
+                  <ObjectHitTargets
+                    items={inspectableObjects}
+                    activeId={selectedObjectId}
+                    onHoverChange={setHoveredObjectId}
+                    onSelect={handleObjectSelect}
+                  />
+                  <SelectionOverlays
+                    items={inspectableObjects}
+                    activeId={selectedObjectId}
+                    hoveredId={hoveredObjectId}
+                  />
+                  <ObjectLabels items={objectLabels} />
+                </>
               ) : null}
             </>
           )}
@@ -701,7 +1143,13 @@ function PreviewContent({
   );
 }
 
-export function ScenePreviewCanvas({ scene, renderScene }: ScenePreviewCanvasProps) {
+export function ScenePreviewCanvas({
+  scene,
+  renderScene,
+  wallOpacity,
+  wallDisplayMode,
+  showObjectLabels,
+}: ScenePreviewCanvasProps) {
   if (!scene && !renderScene) {
     return (
       <div className="canvas-empty">
@@ -732,7 +1180,13 @@ export function ScenePreviewCanvas({ scene, renderScene }: ScenePreviewCanvasPro
         gl={{ antialias: true }}
       >
         <color attach="background" args={["#020617"]} />
-        <PreviewContent scene={scene} renderScene={renderScene} />
+        <PreviewContent
+          scene={scene}
+          renderScene={renderScene}
+          wallOpacity={wallOpacity}
+          wallDisplayMode={wallDisplayMode}
+          showObjectLabels={showObjectLabels}
+        />
         <OrbitControls
           makeDefault
           enableDamping
@@ -750,7 +1204,7 @@ export function ScenePreviewCanvas({ scene, renderScene }: ScenePreviewCanvasPro
       <div className="canvas-caption">
         <div>
           <strong>Three.js Preview</strong>
-          <span>左键旋转，右键平移，滚轮缩放</span>
+          <span>悬停看单个标签，点击固定，Ctrl/Cmd+点击取消固定</span>
         </div>
         <span className="canvas-badge">{badge}</span>
       </div>

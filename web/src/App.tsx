@@ -5,6 +5,7 @@ import {
   DoorOpen,
   Image as ImageIcon,
   Layers3,
+  Tag,
   ScrollText,
 } from "lucide-react";
 import { ScenePreviewCanvas } from "./components/ScenePreviewCanvas";
@@ -23,6 +24,8 @@ import type {
   SceneSummary,
 } from "./types";
 import "./index.css";
+
+type WallDisplayMode = "solid" | "transparent" | "hidden" | "wireframe";
 
 function formatDatasetLabel(dataset: string): string {
   return dataset === "sage" ? "SAGE" : "SceneSmith";
@@ -95,6 +98,9 @@ export default function App() {
   const [selectedSceneUid, setSelectedSceneUid] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [wallOpacity, setWallOpacity] = useState(0.35);
+  const [wallDisplayMode, setWallDisplayMode] = useState<WallDisplayMode>("transparent");
+  const [showObjectLabels, setShowObjectLabels] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -296,6 +302,10 @@ export default function App() {
     setSelectedSceneUid(nextScene);
   }
 
+  function handleWallOpacityChange(value: string) {
+    setWallOpacity(Number(value) / 100);
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -338,6 +348,48 @@ export default function App() {
                 </option>
               ))}
             </select>
+          </label>
+
+          <label className="control-shell control-shell-range">
+            <span>Wall Opacity</span>
+            <div className="range-control">
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                value={Math.round(wallOpacity * 100)}
+                onInput={(event) => handleWallOpacityChange(event.currentTarget.value)}
+                onChange={(event) => handleWallOpacityChange(event.currentTarget.value)}
+              />
+              <strong>{Math.round(wallOpacity * 100)}%</strong>
+            </div>
+          </label>
+
+          <label className="select-shell">
+            <span>Wall View</span>
+            <select
+              value={wallDisplayMode}
+              onChange={(event) => setWallDisplayMode(event.target.value as WallDisplayMode)}
+            >
+              <option value="solid">Solid</option>
+              <option value="transparent">Transparent</option>
+              <option value="hidden">Hidden</option>
+              <option value="wireframe">Wireframe</option>
+            </select>
+          </label>
+
+          <label className="control-shell control-shell-toggle">
+            <span>Object Labels</span>
+            <div className="toggle-control">
+              <Tag size={14} />
+              <input
+                type="checkbox"
+                checked={showObjectLabels}
+                onChange={(event) => setShowObjectLabels(event.target.checked)}
+              />
+              <strong>{showObjectLabels ? "On" : "Off"}</strong>
+            </div>
           </label>
         </div>
       </header>
@@ -393,7 +445,13 @@ export default function App() {
             </div>
           </div>
 
-          <ScenePreviewCanvas scene={selectedScene} renderScene={selectedRenderScene} />
+          <ScenePreviewCanvas
+            scene={selectedScene}
+            renderScene={selectedRenderScene}
+            wallOpacity={wallOpacity}
+            wallDisplayMode={wallDisplayMode}
+            showObjectLabels={showObjectLabels}
+          />
         </section>
 
         <aside className="info-panel">
