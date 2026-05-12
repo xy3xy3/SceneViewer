@@ -2,6 +2,12 @@
 
 3D 场景查看器，包含数据集下载预处理脚本和 Web 前端渲染界面。
 
+当前支持：
+
+- `SAGE`
+- `SceneSmith`
+- `3D-FRONT`
+
 ## 前置要求
 
 开始之前，请确保已安装以下工具：
@@ -41,6 +47,28 @@ uv run dataset-downloader preprocess sage
 # 生成 renderable 数据
 uv run dataset-downloader renderable sage
 ```
+
+如果你要接入 `3D-FRONT`，请先手动下载以下三个压缩包到仓库根目录的 `assets/` 下：
+
+- `assets/3D-FRONT.zip`
+- `assets/3D-FUTURE-model.zip`
+- `assets/3D-FRONT-texture.zip`
+
+然后执行：
+
+```bash
+cd scripts/dataset_downloader
+uv sync
+uv run dataset-downloader preprocess 3dfront --limit 8
+uv run dataset-downloader renderable 3dfront --limit 8
+```
+
+说明：
+
+- `3D-FRONT.zip` 提供房间布局和场景 JSON。
+- `3D-FUTURE-model.zip` 提供家具几何和纹理。
+- `3D-FRONT-texture.zip` 提供墙面和地面贴图。
+- `--limit` 适合第一次本地联调时只生成一小批房间；去掉它即可跑更多场景。
 
 详细的数据集操作说明请查看 [scripts/dataset_downloader/README.md](scripts/dataset_downloader/README.md)。
 

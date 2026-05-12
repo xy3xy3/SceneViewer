@@ -17,7 +17,9 @@ import type { ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
 import { fetchRepoText, toRepoAssetUrl } from "../lib/repoAssets";
 import type {
+  Renderable3dFrontRoomShell,
   RenderableSceneManifest,
+  RenderableSceneSmithRoomShell,
   RenderableSageDoor,
   RenderableSageRoom,
   SceneManifest,
@@ -33,6 +35,10 @@ interface ScenePreviewCanvasProps {
   wallDisplayMode: "solid" | "transparent" | "hidden" | "wireframe";
   showObjectLabels: boolean;
 }
+
+type ScenePreviewViewportProps = Omit<ScenePreviewCanvasProps, "renderScene"> & {
+  renderScene: RenderableSceneManifest;
+};
 
 type Vector3Tuple = [number, number, number];
 
@@ -62,6 +68,7 @@ type AssetPlacement = {
   position: Vector3Tuple;
   rotationYDeg: number;
   scale: Vector3Tuple;
+  quaternion?: [number, number, number, number] | null;
   opacity?: number;
   wireframe?: boolean;
   visible?: boolean;
@@ -78,7 +85,7 @@ type SceneBounds = {
   size: Vector3Tuple;
 };
 
-type MaterialProfile = "sage" | "scenesmith";
+type MaterialProfile = "sage" | "scenesmith" | "3dfront";
 
 type ObjectLabelPlacement = {
   id: string;
@@ -468,6 +475,7 @@ function AssetModel({
   position,
   rotationYDeg,
   scale,
+  quaternion,
   onReady,
   onBounds,
   materialProfile,
@@ -485,6 +493,7 @@ function AssetModel({
   position: Vector3Tuple;
   rotationYDeg: number;
   scale: Vector3Tuple;
+  quaternion?: [number, number, number, number] | null;
   onReady?: () => void;
   onBounds?: (bounds: { center: Vector3Tuple; size: Vector3Tuple }) => void;
   materialProfile: MaterialProfile;
@@ -503,6 +512,66 @@ function AssetModel({
     return null;
   }
 
+  return (
+    <AssetModelContent
+      url={url}
+      position={position}
+      rotationYDeg={rotationYDeg}
+      scale={scale}
+      quaternion={quaternion}
+      onReady={onReady}
+      onBounds={onBounds}
+      materialProfile={materialProfile}
+      opacity={opacity}
+      wireframe={wireframe}
+      visible={visible}
+      doubleSided={doubleSided}
+      transparentDepthWrite={transparentDepthWrite}
+      forceSinglePass={forceSinglePass}
+      polygonOffset={polygonOffset}
+      polygonOffsetFactor={polygonOffsetFactor}
+      polygonOffsetUnits={polygonOffsetUnits}
+    />
+  );
+}
+
+function AssetModelContent({
+  url,
+  position,
+  rotationYDeg,
+  scale,
+  quaternion,
+  onReady,
+  onBounds,
+  materialProfile,
+  opacity,
+  wireframe,
+  visible = true,
+  doubleSided,
+  transparentDepthWrite,
+  forceSinglePass,
+  polygonOffset,
+  polygonOffsetFactor,
+  polygonOffsetUnits,
+}: {
+  url: string;
+  position: Vector3Tuple;
+  rotationYDeg: number;
+  scale: Vector3Tuple;
+  quaternion?: [number, number, number, number] | null;
+  onReady?: () => void;
+  onBounds?: (bounds: { center: Vector3Tuple; size: Vector3Tuple }) => void;
+  materialProfile: MaterialProfile;
+  opacity?: number;
+  wireframe?: boolean;
+  visible?: boolean;
+  doubleSided?: boolean;
+  transparentDepthWrite?: boolean;
+  forceSinglePass?: boolean;
+  polygonOffset?: boolean;
+  polygonOffsetFactor?: number;
+  polygonOffsetUnits?: number;
+}) {
   const gltf = useGLTF(url);
   const groupRef = useRef<THREE.Group | null>(null);
   const object = useMemo(
@@ -529,6 +598,13 @@ function AssetModel({
       transparentDepthWrite,
       wireframe,
     ],
+  );
+  const resolvedQuaternion = useMemo(
+    () =>
+      quaternion
+        ? new THREE.Quaternion(quaternion[0], quaternion[1], quaternion[2], quaternion[3])
+        : undefined,
+    [quaternion],
   );
 
   useEffect(() => {
@@ -560,14 +636,15 @@ function AssetModel({
         Math.max(size.z, 0.18),
       ],
     });
-  }, [object, onBounds, position, rotationYDeg, scale]);
+  }, [object, onBounds, position, quaternion, rotationYDeg, scale]);
 
   return (
     <group
       ref={groupRef}
       visible={visible}
       position={position}
-      rotation={[0, THREE.MathUtils.degToRad(rotationYDeg), 0]}
+      rotation={quaternion ? undefined : [0, THREE.MathUtils.degToRad(rotationYDeg), 0]}
+      quaternion={resolvedQuaternion}
       scale={scale}
     >
       <primitive object={object} />
@@ -594,13 +671,6 @@ function BatchedAssetModels({
   const [readyCount, setReadyCount] = useState(0);
   const loadedKeysRef = useRef<Set<string>>(new Set());
   const completedRef = useRef(false);
-
-  useEffect(() => {
-    loadedKeysRef.current = new Set();
-    completedRef.current = false;
-    setVisibleCount(Math.min(batchSize, items.length));
-    setReadyCount(0);
-  }, [batchSize, items]);
 
   useEffect(() => {
     if (visibleCount >= items.length || readyCount < visibleCount) {
@@ -650,6 +720,7 @@ function BatchedAssetModels({
             position={item.position}
             rotationYDeg={item.rotationYDeg}
             scale={item.scale}
+            quaternion={item.quaternion}
             onReady={() => handleReady(item.key)}
             onBounds={onItemBounds ? (bounds) => onItemBounds(item.key, bounds) : undefined}
             materialProfile={materialProfile}
@@ -915,24 +986,40 @@ function computeSceneBounds(
     }
 
     if (scene) {
-    for (const room of scene.normalized.rooms) {
-      const translation = room.frame?.translation ?? [0, 0, 0];
-      const width = Math.max(room.dimensions?.width ?? 2, 1);
-      const length = Math.max(room.dimensions?.length ?? 2, 1);
-      const height = Math.max(room.dimensions?.height ?? room.ceiling_height ?? 2.8, 2);
-      includeBox(
-        [translation[0], translation[1] + height / 2, translation[2]],
-        [width, height, length],
-      );
-    }
-
-    for (const object of scene.normalized.objects) {
-      if (!object.bbox_min || !object.bbox_max) {
-        continue;
+      if (renderScene.dataset === "3dfront") {
+        for (const room of scene.normalized.rooms) {
+          const width = Math.max(room.dimensions?.width ?? 2, 1);
+          const length = Math.max(room.dimensions?.length ?? 2, 1);
+          const height = Math.max(room.dimensions?.height ?? room.ceiling_height ?? 2.8, 2);
+          includeBox(
+            [
+              room.position?.x ?? 0,
+              (room.position?.y ?? 0) + height / 2,
+              room.position?.z ?? 0,
+            ],
+            [width, height, length],
+          );
+        }
+      } else {
+        for (const room of scene.normalized.rooms) {
+          const translation = room.frame?.translation ?? [0, 0, 0];
+          const width = Math.max(room.dimensions?.width ?? 2, 1);
+          const length = Math.max(room.dimensions?.length ?? 2, 1);
+          const height = Math.max(room.dimensions?.height ?? room.ceiling_height ?? 2.8, 2);
+          includeBox(
+            [translation[0], translation[1] + height / 2, translation[2]],
+            [width, height, length],
+          );
+        }
       }
-      expandBounds(minMax, object.bbox_min);
-      expandBounds(minMax, object.bbox_max);
-    }
+
+      for (const object of scene.normalized.objects) {
+        if (!object.bbox_min || !object.bbox_max) {
+          continue;
+        }
+        expandBounds(minMax, object.bbox_min);
+        expandBounds(minMax, object.bbox_max);
+      }
     }
   }
 
@@ -1010,6 +1097,20 @@ function SageRoomShell({
   );
 }
 
+function roomShellOpacity(
+  category: Renderable3dFrontRoomShell["category"] | RenderableSceneSmithRoomShell["category"],
+  wallDisplayMode: "solid" | "transparent" | "hidden" | "wireframe",
+  wallOpacity: number,
+): number {
+  if (category === "wall" || category === "window" || category === "door" || category === "feature") {
+    return resolveWallOpacity(wallDisplayMode, wallOpacity);
+  }
+  if (category === "ceiling") {
+    return Math.max(0.24, Math.min(0.72, wallOpacity));
+  }
+  return 1;
+}
+
 function SageOpenings({ rooms }: { rooms: RenderableSageRoom[] }) {
   const markers = useMemo(() => {
     const wallsById = new Map<string, SageWall>();
@@ -1071,9 +1172,22 @@ function PreviewContent({
   onRenderProgressChange: (snapshot: RenderProgressSnapshot) => void;
 }) {
   const dataset = renderScene.dataset;
+  const shellCount = dataset === "sage" ? 0 : renderScene.room_shells.length;
+  const roomGeometryPaths = useMemo(
+    () =>
+      dataset === "scenesmith" && scene
+        ? (scene.normalized.rooms ?? [])
+            .map((room) => room.room_geometry_sdf)
+            .filter((value): value is string => Boolean(value))
+        : [],
+    [dataset, scene],
+  );
+  const needsShellTransforms = dataset === "scenesmith" && roomGeometryPaths.length > 0;
   const [fitVersion, setFitVersion] = useState(0);
-  const [scenesmithShellsReady, setScenesmithShellsReady] = useState(dataset !== "scenesmith");
-  const [shellTransformsLoaded, setShellTransformsLoaded] = useState(dataset !== "scenesmith");
+  const [scenesmithShellsReady, setScenesmithShellsReady] = useState(
+    dataset === "sage" || shellCount === 0,
+  );
+  const [shellTransformsLoaded, setShellTransformsLoaded] = useState(!needsShellTransforms);
   const [shellTransformMap, setShellTransformMap] = useState<Record<string, SceneSmithShellTransform>>({});
   const [hoveredObjectId, setHoveredObjectId] = useState<string | null>(null);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
@@ -1083,15 +1197,6 @@ function PreviewContent({
   const [measuredObjectBounds, setMeasuredObjectBounds] = useState<
     Record<string, { center: Vector3Tuple; size: Vector3Tuple }>
   >({});
-  const [sageBatchProgress, setSageBatchProgress] = useState<BatchProgressSnapshot>(
-    createEmptyBatchProgress(),
-  );
-  const [shellBatchProgress, setShellBatchProgress] = useState<BatchProgressSnapshot>(
-    createEmptyBatchProgress(),
-  );
-  const [objectBatchProgress, setObjectBatchProgress] = useState<BatchProgressSnapshot>(
-    createEmptyBatchProgress(),
-  );
   const sageAssets = useMemo(() => {
     if (dataset !== "sage") {
       return [];
@@ -1159,11 +1264,73 @@ function PreviewContent({
       }),
     );
   }, [dataset, renderScene]);
+  const front3dShellAssets = useMemo(() => {
+    if (dataset !== "3dfront") {
+      return [];
+    }
+
+    return renderScene.room_shells.map(
+      (shell): AssetPlacement => {
+        const shellOpacity = roomShellOpacity(shell.category, wallDisplayMode, wallOpacity);
+        const hidden =
+          (shell.category === "wall" ||
+            shell.category === "window" ||
+            shell.category === "door" ||
+            shell.category === "feature") &&
+          wallDisplayMode === "hidden";
+        return {
+          key: `${shell.id}::${shell.asset_path}`,
+          assetPath: shell.asset_path,
+          position: shell.position,
+          rotationYDeg: shell.rotation_y_deg,
+          scale: shell.scale,
+          opacity: shellOpacity,
+          wireframe:
+            (shell.category === "wall" ||
+              shell.category === "window" ||
+              shell.category === "door" ||
+              shell.category === "feature") &&
+            wallDisplayMode === "wireframe",
+          visible: !hidden,
+          doubleSided: shell.category !== "floor",
+          transparentDepthWrite: false,
+          forceSinglePass: shellOpacity < 0.999,
+          polygonOffset: shellOpacity < 0.999,
+          polygonOffsetFactor: shellOpacity < 0.999 ? -1 : 0,
+          polygonOffsetUnits: shellOpacity < 0.999 ? -1 : 0,
+        };
+      },
+    );
+  }, [dataset, renderScene, wallDisplayMode, wallOpacity]);
+  const front3dObjectAssets = useMemo(() => {
+    if (dataset !== "3dfront") {
+      return [];
+    }
+
+    return renderScene.objects.map(
+      (object): AssetPlacement => ({
+        key: object.id,
+        assetPath: object.asset_path,
+        position: object.position,
+        rotationYDeg: object.rotation_y_deg,
+        scale: object.scale,
+        quaternion: object.quaternion,
+      }),
+    );
+  }, [dataset, renderScene]);
+  const [sageBatchProgress, setSageBatchProgress] = useState<BatchProgressSnapshot>(() =>
+    createEmptyBatchProgress(dataset === "sage" ? sageAssets.length : 0),
+  );
+  const [shellBatchProgress, setShellBatchProgress] = useState<BatchProgressSnapshot>(() =>
+    createEmptyBatchProgress(dataset === "sage" ? 0 : renderScene.room_shells.length),
+  );
+  const [objectBatchProgress, setObjectBatchProgress] = useState<BatchProgressSnapshot>(() =>
+    createEmptyBatchProgress(dataset === "sage" ? 0 : renderScene.objects.length),
+  );
   const sceneBounds = useMemo(
     () => computeSceneBounds(scene, renderScene, measuredShellBounds),
     [measuredShellBounds, renderScene, scene],
   );
-  const scenesmithShellCount = dataset === "scenesmith" ? renderScene.room_shells.length : 0;
   const inspectableObjects = useMemo((): InspectableObject[] => {
     if (renderScene.dataset === "sage") {
       return renderScene.objects.map((object) => {
@@ -1178,6 +1345,45 @@ function PreviewContent({
           label: labelText(object.type || object.description, object.id),
           position: measured?.center ?? object.position,
           size: measured?.size ?? size,
+        };
+      });
+    }
+
+    if (renderScene.dataset === "3dfront") {
+      return renderScene.objects.map((object) => {
+        const measured = measuredObjectBounds[object.id];
+        const sourceObject = (scene?.normalized.objects ?? []).find((item) => item.id === object.id);
+        const bboxMin = sourceObject?.bbox_min ?? null;
+        const bboxMax = sourceObject?.bbox_max ?? null;
+        const preferredLabel =
+          sourceObject?.name || sourceObject?.type || object.object_type || object.description || object.id;
+
+        if (bboxMin && bboxMax) {
+          return {
+            id: object.id,
+            label: labelText(preferredLabel, object.id),
+            position: measured?.center ?? ([
+              (bboxMin[0] + bboxMax[0]) / 2,
+              (bboxMin[1] + bboxMax[1]) / 2,
+              (bboxMin[2] + bboxMax[2]) / 2,
+            ] as Vector3Tuple),
+            size: measured?.size ?? ([
+              Math.max(Math.abs(bboxMax[0] - bboxMin[0]), 0.18),
+              Math.max(Math.abs(bboxMax[1] - bboxMin[1]), 0.18),
+              Math.max(Math.abs(bboxMax[2] - bboxMin[2]), 0.18),
+            ] as Vector3Tuple),
+          };
+        }
+
+        return {
+          id: object.id,
+          label: labelText(preferredLabel, object.id),
+          position: measured?.center ?? object.position,
+          size: measured?.size ?? ([
+            Math.max(Math.abs(object.scale[0]), 0.45),
+            Math.max(Math.abs(object.scale[1]), 0.45),
+            Math.max(Math.abs(object.scale[2]), 0.45),
+          ] as Vector3Tuple),
         };
       });
     }
@@ -1253,25 +1459,11 @@ function PreviewContent({
   }, [hoveredObjectId, inspectableObjects, selectedObjectId, showObjectLabels]);
 
   useEffect(() => {
-    if (dataset !== "scenesmith" || !scene) {
-      setShellTransformMap({});
-      setShellTransformsLoaded(true);
-      return;
-    }
-
-    const roomGeometryPaths = (scene.normalized.rooms ?? [])
-      .map((room) => room.room_geometry_sdf)
-      .filter((value): value is string => Boolean(value));
-
-    if (roomGeometryPaths.length === 0) {
-      setShellTransformMap({});
-      setShellTransformsLoaded(true);
+    if (!needsShellTransforms) {
       return;
     }
 
     let cancelled = false;
-    setShellTransformsLoaded(false);
-    setShellTransformMap({});
 
     async function loadShellTransforms() {
       try {
@@ -1304,35 +1496,13 @@ function PreviewContent({
     return () => {
       cancelled = true;
     };
-  }, [dataset, scene, renderScene.scene_uid]);
+  }, [needsShellTransforms, roomGeometryPaths]);
 
   useEffect(() => {
-    if (dataset === "sage") {
-      setSageBatchProgress(createEmptyBatchProgress(sageAssets.length));
-      setShellBatchProgress(createEmptyBatchProgress());
-      setObjectBatchProgress(createEmptyBatchProgress());
-      return;
-    }
-
-    setSageBatchProgress(createEmptyBatchProgress());
-    setShellBatchProgress(createEmptyBatchProgress(scenesmithShellAssets.length));
-    setObjectBatchProgress(createEmptyBatchProgress(scenesmithObjectAssets.length));
-  }, [dataset, renderScene.scene_uid, sageAssets.length, scenesmithObjectAssets.length, scenesmithShellAssets.length]);
-
-  useEffect(() => {
-    setScenesmithShellsReady(dataset !== "scenesmith" || scenesmithShellCount === 0);
-    setFitVersion((current) => current + 1);
-  }, [dataset, renderScene.scene_uid, scenesmithShellCount, shellTransformsLoaded]);
-
-  useEffect(() => {
-    setHoveredObjectId(null);
-    setSelectedObjectId(null);
-    setShellTransformsLoaded(dataset !== "scenesmith");
-    setShellTransformMap({});
-    setMeasuredShellBounds({});
-    setMeasuredObjectBounds({});
-    document.body.style.cursor = "default";
-  }, [dataset, renderScene.scene_uid]);
+    return () => {
+      document.body.style.cursor = "default";
+    };
+  }, []);
 
   useEffect(() => {
     if (dataset === "sage") {
@@ -1347,6 +1517,43 @@ function PreviewContent({
           total === 0
             ? "No object assets need staged rendering"
             : `Mounted ${completed}/${total} object assets`,
+        completed,
+        total,
+        progress,
+      });
+      return;
+    }
+
+    if (dataset === "3dfront") {
+      const shellCompleted = Math.min(shellBatchProgress.readyCount, front3dShellAssets.length);
+      const objectCompleted = Math.min(objectBatchProgress.readyCount, front3dObjectAssets.length);
+      const total = front3dShellAssets.length + front3dObjectAssets.length;
+      const completed = shellCompleted + (scenesmithShellsReady ? objectCompleted : 0);
+      const ready =
+        (front3dShellAssets.length === 0 || shellBatchProgress.complete) &&
+        (front3dObjectAssets.length === 0 || objectBatchProgress.complete);
+      const progress = total === 0 ? 100 : Math.round((completed / total) * 100);
+
+      let stage = "Scene ready";
+      let detail = "All room shells and objects are mounted";
+      if (!scenesmithShellsReady) {
+        stage = "Preparing room shells";
+        detail =
+          front3dShellAssets.length === 0
+            ? "No room shell assets to stage"
+            : `Mounted ${shellCompleted}/${front3dShellAssets.length} room shell assets`;
+      } else if (!ready) {
+        stage = "Preparing objects";
+        detail =
+          front3dObjectAssets.length === 0
+            ? "No object assets to stage"
+            : `Mounted ${objectCompleted}/${front3dObjectAssets.length} object assets`;
+      }
+
+      onRenderProgressChange({
+        ready,
+        stage,
+        detail,
         completed,
         total,
         progress,
@@ -1392,6 +1599,8 @@ function PreviewContent({
     });
   }, [
     dataset,
+    front3dObjectAssets.length,
+    front3dShellAssets.length,
     objectBatchProgress.complete,
     objectBatchProgress.readyCount,
     onRenderProgressChange,
@@ -1503,6 +1712,7 @@ function PreviewContent({
               ))}
               <SageOpenings rooms={renderScene.rooms} />
               <BatchedAssetModels
+                key={`${renderScene.scene_uid}::sage-objects`}
                 items={sageAssets}
                 batchSize={24}
                 onItemBounds={handleObjectBounds}
@@ -1522,10 +1732,50 @@ function PreviewContent({
               />
               <ObjectLabels items={objectLabels} />
             </>
+          ) : dataset === "3dfront" ? (
+            <>
+              <BatchedAssetModels
+                key={`${renderScene.scene_uid}::3dfront-shells`}
+                items={front3dShellAssets}
+                batchSize={24}
+                materialProfile="3dfront"
+                onItemBounds={handleShellBounds}
+                onProgress={setShellBatchProgress}
+                onComplete={() => {
+                  setScenesmithShellsReady(true);
+                  setFitVersion((current) => current + 1);
+                }}
+              />
+              {scenesmithShellsReady ? (
+                <>
+                  <BatchedAssetModels
+                    key={`${renderScene.scene_uid}::3dfront-objects`}
+                    items={front3dObjectAssets}
+                    batchSize={20}
+                    onItemBounds={handleObjectBounds}
+                    materialProfile="3dfront"
+                    onProgress={setObjectBatchProgress}
+                  />
+                  <ObjectHitTargets
+                    items={inspectableObjects}
+                    activeId={selectedObjectId}
+                    onHoverChange={setHoveredObjectId}
+                    onSelect={handleObjectSelect}
+                  />
+                  <SelectionOverlays
+                    items={inspectableObjects}
+                    activeId={selectedObjectId}
+                    hoveredId={hoveredObjectId}
+                  />
+                  <ObjectLabels items={objectLabels} />
+                </>
+              ) : null}
+            </>
           ) : (
             <>
               {shellTransformsLoaded ? (
                 <BatchedAssetModels
+                  key={`${renderScene.scene_uid}::scenesmith-shells`}
                   items={scenesmithShellAssets}
                   batchSize={24}
                   materialProfile="scenesmith"
@@ -1540,6 +1790,7 @@ function PreviewContent({
               {scenesmithShellsReady ? (
                 <>
                   <BatchedAssetModels
+                    key={`${renderScene.scene_uid}::scenesmith-objects`}
                     items={scenesmithObjectAssets}
                     batchSize={20}
                     onItemBounds={handleObjectBounds}
@@ -1568,13 +1819,13 @@ function PreviewContent({
   );
 }
 
-export function ScenePreviewCanvas({
+function ScenePreviewViewport({
   scene,
   renderScene,
   wallOpacity,
   wallDisplayMode,
   showObjectLabels,
-}: ScenePreviewCanvasProps) {
+}: ScenePreviewViewportProps) {
   const [resourceProgress, setResourceProgress] = useState<ResourceProgressSnapshot>({
     active: false,
     item: "",
@@ -1584,71 +1835,20 @@ export function ScenePreviewCanvas({
   });
   const [renderProgress, setRenderProgress] = useState<RenderProgressSnapshot>({
     ready: false,
-    stage: "Waiting for scene",
-    detail: "Choose a scene to start rendering",
+    stage: "Preparing scene",
+    detail: "Initializing asset batches",
     completed: 0,
     total: 0,
     progress: 0,
   });
 
-  useEffect(() => {
-    if (!renderScene) {
-      setResourceProgress({
-        active: false,
-        item: "",
-        loaded: 0,
-        total: 0,
-        progress: 0,
-      });
-      setRenderProgress({
-        ready: false,
-        stage: "Loading scene data",
-        detail: "Waiting for renderable scene manifest",
-        completed: 0,
-        total: 0,
-        progress: 0,
-      });
-      return;
-    }
-
-    setResourceProgress({
-      active: false,
-      item: "",
-      loaded: 0,
-      total: 0,
-      progress: 100,
-    });
-    setRenderProgress({
-      ready: false,
-      stage: "Preparing scene",
-      detail: "Initializing asset batches",
-      completed: 0,
-      total: 0,
-      progress: 0,
-    });
-  }, [renderScene?.scene_uid]);
-
-  if (!scene && !renderScene) {
-    return (
-      <div className="canvas-empty">
-        <p>先选择一个场景</p>
-      </div>
-    );
-  }
-
-  if (!renderScene) {
-    return (
-      <div className="canvas-empty">
-        <p>正在加载可渲染资产...</p>
-      </div>
-    );
-  }
-
   const dataset = renderScene.dataset;
   const badge =
     dataset === "sage"
       ? `SAGE: ${renderScene.objects.length} textured objects`
-      : `SceneSmith: ${renderScene.room_shells.length} room shells + ${renderScene.objects.length} objects`;
+      : dataset === "3dfront"
+        ? `3D-FRONT: ${renderScene.room_shells.length} room shells + ${renderScene.objects.length} objects`
+        : `SceneSmith: ${renderScene.room_shells.length} room shells + ${renderScene.objects.length} objects`;
   const resourceActive = resourceProgress.active && resourceProgress.total > 0;
   const resourceValue =
     resourceProgress.total > 0
@@ -1747,6 +1947,7 @@ export function ScenePreviewCanvas({
         <color attach="background" args={["#020617"]} />
         <LoadingProgressReporter sceneKey={renderScene.scene_uid} onChange={setResourceProgress} />
         <PreviewContent
+          key={renderScene.scene_uid}
           scene={scene}
           renderScene={renderScene}
           wallOpacity={wallOpacity}
@@ -1777,4 +1978,26 @@ export function ScenePreviewCanvas({
       </div>
     </div>
   );
+}
+
+export function ScenePreviewCanvas(props: ScenePreviewCanvasProps) {
+  const { scene, renderScene } = props;
+
+  if (!scene && !renderScene) {
+    return (
+      <div className="canvas-empty">
+        <p>先选择一个场景</p>
+      </div>
+    );
+  }
+
+  if (!renderScene) {
+    return (
+      <div className="canvas-empty">
+        <p>正在加载可渲染资产...</p>
+      </div>
+    );
+  }
+
+  return <ScenePreviewViewport key={renderScene.scene_uid} {...props} renderScene={renderScene} />;
 }

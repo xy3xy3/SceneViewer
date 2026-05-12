@@ -13,8 +13,15 @@
 
 - `sage` 对应 `nvidia/SAGE-10k`
 - `scenesmith` 对应 `nepfaff/scenesmith-example-scenes`
+- `3dfront` 对应手动下载的 `3D-FRONT / 3D-FUTURE / 3D-FRONT-texture`
 
 其中 `SceneSmith` 默认只处理 `Room` 和 `House` 两个子集，避免默认拉取 `NotGenerated` 这类需要额外留意上游许可的数据。
+
+`3D-FRONT` 不走 Hugging Face 下载流程，需要先手动把以下文件放到仓库根目录 `assets/`：
+
+- `3D-FRONT.zip`
+- `3D-FUTURE-model.zip`
+- `3D-FRONT-texture.zip`
 
 ## 输出目录
 
@@ -52,6 +59,14 @@ uv sync
 ```
 
 后面的命令默认都在 `scripts/dataset_downloader` 目录下执行。
+
+`preprocess` 和 `renderable` 额外支持：
+
+```bash
+--limit N
+```
+
+用于只处理前 `N` 个场景，方便本地快速联调。
 
 ## 固定 Seed 以便复现
 
@@ -201,7 +216,47 @@ uv run dataset-downloader preprocess all
 
 - `assets/preprocessed/sage/`
 - `assets/preprocessed/scenesmith/`
+- `assets/preprocessed/3dfront/`
 - `assets/preprocessed/datasets.json`
+
+## 3D-FRONT
+
+### 1. 手动准备数据
+
+把以下压缩包放到仓库根目录的 `assets/` 下：
+
+```text
+assets/
+├── 3D-FRONT.zip
+├── 3D-FUTURE-model.zip
+└── 3D-FRONT-texture.zip
+```
+
+### 2. 预处理
+
+```bash
+uv run dataset-downloader preprocess 3dfront --limit 8
+```
+
+输出目录：
+
+- `assets/preprocessed/3dfront/`
+
+### 3. 生成 renderable 数据
+
+```bash
+uv run dataset-downloader renderable 3dfront --limit 8
+```
+
+输出目录：
+
+- `assets/renderable/3dfront/`
+
+### 4. 说明
+
+- 房间壳层 mesh 直接来自 `3D-FRONT.zip` 中的场景网格。
+- 家具 GLB 由 `3D-FUTURE-model.zip` 中的 `raw_model.obj + texture` 转换得到。
+- 少量门窗类引用可能在 `3D-FUTURE-model.zip` 中没有对应模型；当前脚本会自动跳过这些对象，并保留房间结构预览。
 
 ## 补充说明
 

@@ -47,7 +47,7 @@ export interface SceneSummary {
 export interface RenderableDatasetIndex {
   schema_version: number;
   generated_at_utc: string;
-  dataset: "sage" | "scenesmith";
+  dataset: "sage" | "scenesmith" | "3dfront";
   scene_count: number;
   shared_asset_count?: number;
   scenes: RenderableSceneSummary[];
@@ -66,7 +66,7 @@ export interface RenderableSceneSummary {
 export interface SceneManifest {
   schema_version: number;
   generated_at_utc: string;
-  dataset: "sage" | "scenesmith";
+  dataset: "sage" | "scenesmith" | "3dfront";
   scene_id: string;
   scene_uid: string;
   subset?: string | null;
@@ -85,9 +85,23 @@ export interface SceneManifest {
     building_style?: string | null;
     created_from_text?: string | null;
     policy_analysis?: string | null;
+    house_id?: string | null;
+    shell_refs?: NormalizedShellRef[];
+    snapshots?: Array<Record<string, unknown>>;
     rooms: NormalizedRoom[];
     objects: NormalizedObject[];
   };
+}
+
+export interface NormalizedShellRef {
+  id: string;
+  mesh_uid?: string | null;
+  mesh_type?: string | null;
+  category?: string | null;
+  material_uid?: string | null;
+  position?: { x: number; y: number; z: number } | null;
+  scale?: [number, number, number] | null;
+  rotation_quaternion?: [number, number, number, number] | null;
 }
 
 export interface NormalizedRoom {
@@ -116,6 +130,7 @@ export interface NormalizedRoom {
   generated_assets?: Record<string, string[]>;
   floor?: unknown;
   objects?: string[];
+  shell_refs?: NormalizedShellRef[];
 }
 
 export interface SageWall {
@@ -171,6 +186,8 @@ export interface NormalizedObject {
     texture?: string | null;
   } | null;
   metadata?: Record<string, unknown>;
+  quaternion?: [number, number, number, number] | null;
+  scale?: [number, number, number] | null;
 }
 
 export interface RenderableSageDoor {
@@ -215,6 +232,10 @@ export interface RenderableSceneSmithAsset {
   room_id: string;
 }
 
+export interface Renderable3dFrontAsset extends RenderableSceneSmithAsset {
+  quaternion?: [number, number, number, number] | null;
+}
+
 export interface RenderableSceneSmithRoomShell extends RenderableSceneSmithAsset {
   category: "floor" | "wall" | "window";
 }
@@ -222,6 +243,17 @@ export interface RenderableSceneSmithRoomShell extends RenderableSceneSmithAsset
 export interface RenderableSceneSmithObject extends RenderableSceneSmithAsset {
   object_type?: string | null;
   description?: string | null;
+}
+
+export interface Renderable3dFrontRoomShell extends Renderable3dFrontAsset {
+  category: "floor" | "wall" | "window" | "door" | "ceiling" | "trim" | "feature";
+}
+
+export interface Renderable3dFrontObject extends Renderable3dFrontAsset {
+  object_type?: string | null;
+  description?: string | null;
+  source_model_jid?: string | null;
+  source_ref?: string | null;
 }
 
 export interface RenderableSageSceneManifest {
@@ -247,6 +279,21 @@ export interface RenderableSceneSmithSceneManifest {
   objects: RenderableSceneSmithObject[];
 }
 
+export interface Renderable3dFrontSceneManifest {
+  schema_version: number;
+  generated_at_utc: string;
+  dataset: "3dfront";
+  scene_id: string;
+  scene_uid: string;
+  subset?: string | null;
+  house_id?: string | null;
+  source_scene_manifest: string;
+  room_shells: Renderable3dFrontRoomShell[];
+  objects: Renderable3dFrontObject[];
+  skipped_object_count?: number;
+}
+
 export type RenderableSceneManifest =
   | RenderableSageSceneManifest
-  | RenderableSceneSmithSceneManifest;
+  | RenderableSceneSmithSceneManifest
+  | Renderable3dFrontSceneManifest;

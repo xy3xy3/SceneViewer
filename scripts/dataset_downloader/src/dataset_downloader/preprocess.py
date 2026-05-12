@@ -2,12 +2,23 @@ from __future__ import annotations
 
 import json
 import shutil
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
 
 from .config import DATASETS, PREPROCESSED_ROOT, REPO_ROOT
+from .front3d import (
+    FRONT3D_DATASET_KEY,
+    FRONT3D_LAYOUT_ZIP,
+    FRONT3D_MODEL_ZIP,
+    FRONT3D_TEXTURE_ZIP,
+    ensure_front3d_archives,
+    map_front3d_shell_category,
+    repo_relative_path,
+    safe_front3d_name,
+)
 
 
 SCHEMA_VERSION = 1
@@ -19,10 +30,7 @@ def _now_utc() -> str:
 
 
 def _repo_path(path: Path) -> str:
-    try:
-        return path.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
-    except ValueError:
-        return path.resolve().as_posix()
+    return repo_relative_path(path)
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
@@ -76,6 +84,169 @@ def _scenesmith_scene_output_dir(subset: str, scene_id: str) -> Path:
     return PREPROCESSED_ROOT / "scenesmith" / subset / scene_id
 
 
+def _front3d_scene_output_dir(house_id: str, room_id: str) -> Path:
+    return PREPROCESSED_ROOT / FRONT3D_DATASET_KEY / safe_front3d_name(house_id) / safe_front3d_name(room_id)
+
+
+def _front3d_scalar_triplet(values: object) -> list[float] | None:
+    if not isinstance(values, list) or len(values) < 3:
+        return None
+    result: list[float] = []
+    for value in values[:3]:
+        if not isinstance(value, (int, float)):
+            return None
+        result.append(float(value))
+    return result
+
+
+def _front3d_scalar_quaternion(values: object) -> list[float] | None:
+    if not isinstance(values, list) or len(values) < 4:
+        return None
+    result: list[float] = []
+    for value in values[:4]:
+        if not isinstance(value, (int, float)):
+            return None
+        result.append(float(value))
+    return result
+
+
+def _front3d_position(values: object) -> dict[str, float] | None:
+    triplet = _front3d_scalar_triplet(values)
+    if not triplet:
+        return None
+    return {
+        "x": triplet[0],
+        "y": triplet[1],
+        "z": triplet[2],
+    }
+
+
+def _front3d_dimensions(size_values: object) -> dict[str, float] | None:
+    triplet = _front3d_scalar_triplet(size_values)
+    if not triplet:
+        return None
+    return {
+        "width": triplet[0],
+        "length": triplet[1],
+        "height": triplet[2],
+    }
+
+
+def _front3d_bbox_from_position_and_size(
+    *,
+    position: dict[str, float] | None,
+    dimensions: dict[str, float] | None,
+) -> tuple[list[float], list[float]] | tuple[None, None]:
+    if not position or not dimensions:
+        return None, None
+    half_width = max(dimensions["width"], 0.0) / 2.0
+    half_length = max(dimensions["length"], 0.0) / 2.0
+    height = max(dimensions["height"], 0.0)
+    return (
+        [
+            position["x"] - half_width,
+            position["y"],
+            position["z"] - half_length,
+        ],
+        [
+            position["x"] + half_width,
+            position["y"] + height,
+            position["z"] + half_length,
+        ],
+    )
+
+
+def _front3d_room_bounds(
+    room_children: list[dict[str, object]],
+    mesh_by_uid: dict[str, dict[str, object]],
+) -> tuple[dict[str, float] | None, dict[str, float] | None]:
+    coords: list[float] = []
+    for child in room_children:
+        ref = child.get("ref")
+        if not isinstance(ref, str):
+            continue
+        mesh = mesh_by_uid.get(ref)
+        if not mesh:
+            continue
+        xyz = mesh.get("xyz")
+        if isinstance(xyz, list):
+            coords.extend(value for value in xyz if isinstance(value, (int, float)))
+
+    if len(coords) < 3:
+        return None, None
+
+    xs = coords[0::3]
+    ys = coords[1::3]
+    zs = coords[2::3]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    min_z, max_z = min(zs), max(zs)
+    return (
+        {
+            "x": float((min_x + max_x) / 2.0),
+            "y": float(min_y),
+            "z": float((min_z + max_z) / 2.0),
+        },
+        {
+            "width": float(max_x - min_x),
+            "length": float(max_z - min_z),
+            "height": float(max_y - min_y),
+        },
+    )
+
+
+def _front3d_shell_ref(
+    child: dict[str, object],
+    mesh: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "id": child.get("instanceid") or mesh.get("uid"),
+        "mesh_uid": mesh.get("uid"),
+        "mesh_type": mesh.get("type"),
+        "category": map_front3d_shell_category(mesh.get("type")),
+        "material_uid": mesh.get("material"),
+        "position": _front3d_position(child.get("pos")),
+        "scale": _front3d_scalar_triplet(child.get("scale")),
+        "rotation_quaternion": _front3d_scalar_quaternion(child.get("rot")),
+    }
+
+
+def _front3d_object_entry(
+    room_id: str,
+    child: dict[str, object],
+    furniture: dict[str, object],
+) -> dict[str, object]:
+    dimensions = _front3d_dimensions(furniture.get("size"))
+    position = _front3d_position(child.get("pos"))
+    bbox_min, bbox_max = _front3d_bbox_from_position_and_size(
+        position=position,
+        dimensions=dimensions,
+    )
+    return {
+        "id": child.get("instanceid") or furniture.get("uid"),
+        "room_id": room_id,
+        "type": furniture.get("category") or furniture.get("type"),
+        "name": furniture.get("title"),
+        "description": furniture.get("title"),
+        "position": position,
+        "dimensions": dimensions,
+        "quaternion": _front3d_scalar_quaternion(child.get("rot")),
+        "scale": _front3d_scalar_triplet(child.get("scale")),
+        "bbox_min": bbox_min,
+        "bbox_max": bbox_max,
+        "source_id": furniture.get("uid"),
+        "metadata": {
+            "jid": furniture.get("jid"),
+            "valid": bool(furniture.get("valid", True)),
+            "type": furniture.get("type"),
+            "source_category_id": furniture.get("sourceCategoryId"),
+            "bbox": furniture.get("bbox"),
+            "component_modifiers": child.get("componentModifiers") or [],
+            "source_ref": child.get("ref"),
+        },
+    }
+
+
 def _normalize_sage_object(scene_dir: Path, room_id: str, obj: dict[str, object]) -> dict[str, object]:
     source_id = obj.get("source_id")
     mesh_path = scene_dir / "objects" / f"{source_id}.ply" if source_id else None
@@ -107,7 +278,7 @@ def _normalize_sage_object(scene_dir: Path, room_id: str, obj: dict[str, object]
     }
 
 
-def preprocess_sage_dataset() -> dict[str, object]:
+def preprocess_sage_dataset(scene_limit: int | None = None) -> dict[str, object]:
     source_root = DATASETS["sage"].destination_root / "source" / "extracted"
     output_root = PREPROCESSED_ROOT / "sage"
     scenes: list[dict[str, object]] = []
@@ -118,6 +289,8 @@ def preprocess_sage_dataset() -> dict[str, object]:
 
     if source_root.exists():
         for scene_dir in sorted(path for path in source_root.iterdir() if path.is_dir()):
+            if scene_limit is not None and len(scenes) >= scene_limit:
+                break
             layout_files = sorted(scene_dir.glob("layout_*.json"))
             if not layout_files:
                 skipped_scenes.append(
@@ -231,11 +404,187 @@ def preprocess_sage_dataset() -> dict[str, object]:
                 }
             )
 
+            if scene_limit is not None and len(scenes) >= scene_limit:
+                break
+
     index = {
         "schema_version": SCHEMA_VERSION,
         "generated_at_utc": _now_utc(),
         "dataset": "sage",
         "source_root": _repo_path(source_root),
+        "output_root": _repo_path(output_root),
+        "scene_count": len(scenes),
+        "skipped_count": len(skipped_scenes),
+        "scenes": scenes,
+        "skipped_scenes": skipped_scenes,
+    }
+    _write_json(output_root / "index.json", index)
+    return index
+
+
+def preprocess_3dfront_dataset(scene_limit: int | None = None) -> dict[str, object]:
+    ensure_front3d_archives()
+
+    output_root = PREPROCESSED_ROOT / FRONT3D_DATASET_KEY
+    scenes: list[dict[str, object]] = []
+    skipped_scenes: list[dict[str, object]] = []
+
+    if output_root.exists():
+        shutil.rmtree(output_root)
+
+    with zipfile.ZipFile(FRONT3D_LAYOUT_ZIP) as archive:
+        layout_members = sorted(
+            name
+            for name in archive.namelist()
+            if name.startswith("3D-FRONT/") and name.endswith(".json")
+        )
+
+        stop_requested = False
+        for member_name in layout_members:
+            if stop_requested:
+                break
+
+            layout = json.loads(archive.read(member_name))
+            house_id = str(layout.get("uid") or Path(member_name).stem)
+            furniture_by_uid = {
+                item.get("uid"): item
+                for item in layout.get("furniture", [])
+                if isinstance(item, dict) and item.get("uid")
+            }
+            mesh_by_uid = {
+                item.get("uid"): item
+                for item in layout.get("mesh", [])
+                if isinstance(item, dict) and item.get("uid")
+            }
+            snapshots = (layout.get("extension") or {}).get("snapshots") or []
+
+            for room in (layout.get("scene") or {}).get("room", []):
+                if scene_limit is not None and len(scenes) >= scene_limit:
+                    stop_requested = True
+                    break
+
+                if not isinstance(room, dict):
+                    continue
+
+                room_id = str(room.get("instanceid") or room.get("type") or f"room-{len(scenes)}")
+                room_children = [
+                    child
+                    for child in room.get("children", [])
+                    if isinstance(child, dict)
+                ]
+                room_position, room_dimensions = _front3d_room_bounds(room_children, mesh_by_uid)
+                room_shells: list[dict[str, object]] = []
+                room_objects: list[dict[str, object]] = []
+
+                for child in room_children:
+                    ref = child.get("ref")
+                    if not isinstance(ref, str):
+                        continue
+
+                    mesh = mesh_by_uid.get(ref)
+                    if mesh:
+                        room_shells.append(_front3d_shell_ref(child, mesh))
+                        continue
+
+                    furniture = furniture_by_uid.get(ref)
+                    if furniture:
+                        room_objects.append(_front3d_object_entry(room_id, child, furniture))
+                        continue
+
+                if not room_shells and not room_objects:
+                    skipped_scenes.append(
+                        {
+                            "scene_id": room_id,
+                            "scene_uid": f"{FRONT3D_DATASET_KEY}/{house_id}/{room_id}",
+                            "reason": "room_has_no_supported_children",
+                            "source_layout_entry": member_name,
+                        }
+                    )
+                    continue
+
+                scene_uid = f"{FRONT3D_DATASET_KEY}/{house_id}/{room_id}"
+                manifest = _scene_manifest_base(
+                    dataset=FRONT3D_DATASET_KEY,
+                    scene_id=room_id,
+                    scene_uid=scene_uid,
+                    subset=house_id,
+                    scene_dir=FRONT3D_LAYOUT_ZIP.parent,
+                    description=room.get("type"),
+                )
+                manifest["source"] = {
+                    "layout_zip": _repo_path(FRONT3D_LAYOUT_ZIP),
+                    "layout_entry": member_name,
+                    "model_zip": _repo_path(FRONT3D_MODEL_ZIP),
+                    "texture_zip": _repo_path(FRONT3D_TEXTURE_ZIP),
+                }
+                manifest.update(
+                    {
+                        "status": "ready",
+                        "display": {
+                            "title": room_id,
+                            "subtitle": room.get("type"),
+                            "preview_images": [],
+                        },
+                        "stats": {
+                            "room_count": 1,
+                            "object_count": len(room_objects),
+                            "shell_count": len(room_shells),
+                            "renderable_object_count": sum(
+                                1
+                                for item in room_objects
+                                if (item.get("metadata") or {}).get("valid", False)
+                            ),
+                            "snapshot_count": len(snapshots),
+                        },
+                        "assets": {
+                            "layout_zip": _repo_path(FRONT3D_LAYOUT_ZIP),
+                            "layout_entry": member_name,
+                            "model_zip": _repo_path(FRONT3D_MODEL_ZIP),
+                            "texture_zip": _repo_path(FRONT3D_TEXTURE_ZIP),
+                        },
+                        "normalized": {
+                            "kind": "3dfront_room",
+                            "house_id": house_id,
+                            "house_layout_entry": member_name,
+                            "north_vector": layout.get("north_vector"),
+                            "snapshots": snapshots,
+                            "rooms": [
+                                {
+                                    "id": room_id,
+                                    "room_type": room.get("type"),
+                                    "position": room_position,
+                                    "dimensions": room_dimensions,
+                                    "object_ids": [obj.get("id") for obj in room_objects],
+                                    "object_count": len(room_objects),
+                                    "shell_refs": room_shells,
+                                }
+                            ],
+                            "objects": room_objects,
+                        },
+                    }
+                )
+
+                output_dir = _front3d_scene_output_dir(house_id, room_id)
+                scene_manifest_path = output_dir / "scene.json"
+                _write_json(scene_manifest_path, manifest)
+                scenes.append(
+                    {
+                        "scene_id": room_id,
+                        "scene_uid": scene_uid,
+                        "subset": house_id,
+                        "description": room.get("type"),
+                        "title": room_id,
+                        "preview_image": None,
+                        "scene_manifest": _repo_path(scene_manifest_path),
+                        "stats": manifest["stats"],
+                    }
+                )
+
+    index = {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at_utc": _now_utc(),
+        "dataset": FRONT3D_DATASET_KEY,
+        "source_root": _repo_path(FRONT3D_LAYOUT_ZIP),
         "output_root": _repo_path(output_root),
         "scene_count": len(scenes),
         "skipped_count": len(skipped_scenes),
@@ -608,7 +957,7 @@ def _normalize_scenesmith_room(
     return room_manifest, normalized_objects
 
 
-def preprocess_scenesmith_dataset() -> dict[str, object]:
+def preprocess_scenesmith_dataset(scene_limit: int | None = None) -> dict[str, object]:
     source_root = DATASETS["scenesmith"].destination_root / "source" / "extracted"
     output_root = PREPROCESSED_ROOT / "scenesmith"
     scenes: list[dict[str, object]] = []
@@ -621,6 +970,8 @@ def preprocess_scenesmith_dataset() -> dict[str, object]:
         for subset_dir in sorted(path for path in source_root.iterdir() if path.is_dir()):
             subset = subset_dir.name
             for scene_dir in sorted(path for path in subset_dir.iterdir() if path.is_dir()):
+                if scene_limit is not None and len(scenes) >= scene_limit:
+                    break
                 scene_id = scene_dir.name
                 scene_uid = f"scenesmith/{subset}/{scene_id}"
                 combined_dir = scene_dir / "combined_house"
@@ -754,6 +1105,9 @@ def preprocess_scenesmith_dataset() -> dict[str, object]:
                         "stats": manifest["stats"],
                     }
                 )
+
+            if scene_limit is not None and len(scenes) >= scene_limit:
+                break
 
     index = {
         "schema_version": SCHEMA_VERSION,

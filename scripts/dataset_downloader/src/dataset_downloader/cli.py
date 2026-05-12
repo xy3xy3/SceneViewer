@@ -20,11 +20,13 @@ from huggingface_hub.hf_api import RepoFile
 
 from .config import DATASETS, DatasetSpec, SCENESMITH_ALL_SUBSETS
 from .preprocess import (
+    preprocess_3dfront_dataset,
     preprocess_sage_dataset,
     preprocess_scenesmith_dataset,
     write_dataset_catalog,
 )
 from .renderable import (
+    build_3dfront_renderables,
     build_sage_renderables,
     build_scenesmith_renderables,
     write_renderable_catalog,
@@ -451,6 +453,12 @@ def dataset_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParse
         choices=[*sorted(DATASETS), "all"],
         help="Which dataset to preprocess.",
     )
+    preprocess_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional maximum number of scenes to preprocess for fast local iteration.",
+    )
 
     renderable_parser = subparsers.add_parser(
         "renderable",
@@ -460,6 +468,12 @@ def dataset_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParse
         "dataset",
         choices=[*sorted(DATASETS), "all"],
         help="Which dataset to turn into renderable assets.",
+    )
+    renderable_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional maximum number of scenes to convert into renderable assets.",
     )
 
 
@@ -504,10 +518,12 @@ def main() -> None:
     if args.command == "preprocess":
         targets = sorted(DATASETS) if args.dataset == "all" else [args.dataset]
         for target in targets:
-            if target == "sage":
-                preprocess_sage_dataset()
+            if target == "3dfront":
+                preprocess_3dfront_dataset(scene_limit=args.limit)
+            elif target == "sage":
+                preprocess_sage_dataset(scene_limit=args.limit)
             elif target == "scenesmith":
-                preprocess_scenesmith_dataset()
+                preprocess_scenesmith_dataset(scene_limit=args.limit)
         catalog = write_dataset_catalog()
         print(json.dumps(catalog, indent=2))
         return
@@ -515,15 +531,22 @@ def main() -> None:
     if args.command == "renderable":
         targets = sorted(DATASETS) if args.dataset == "all" else [args.dataset]
         for target in targets:
-            if target == "sage":
-                build_sage_renderables()
+            if target == "3dfront":
+                build_3dfront_renderables(scene_limit=args.limit)
+            elif target == "sage":
+                build_sage_renderables(scene_limit=args.limit)
             elif target == "scenesmith":
-                build_scenesmith_renderables()
+                build_scenesmith_renderables(scene_limit=args.limit)
         catalog = write_renderable_catalog()
         print(json.dumps(catalog, indent=2))
         return
 
     spec = DATASETS[args.dataset]
+    if not spec.supports_remote_download:
+        raise SystemExit(
+            f"{spec.key} is a manual-download dataset. Place the required archives in assets/ "
+            "and use `dataset-downloader preprocess` / `dataset-downloader renderable` instead."
+        )
     subsets = _selected_subsets(spec, args.subsets)
     destination, manifests_dir = _resolve_paths(args, spec)
 

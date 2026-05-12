@@ -30,7 +30,13 @@ import "./index.css";
 type WallDisplayMode = "solid" | "transparent" | "hidden" | "wireframe";
 
 function formatDatasetLabel(dataset: string): string {
-  return dataset === "sage" ? "SAGE" : "SceneSmith";
+  if (dataset === "sage") {
+    return "SAGE";
+  }
+  if (dataset === "scenesmith") {
+    return "SceneSmith";
+  }
+  return "3D-FRONT";
 }
 
 function formatSceneLabel(
@@ -79,6 +85,14 @@ function roomSubtitle(room: NormalizedRoom, dataset: SceneManifest["dataset"]): 
     const length = room.dimensions?.length;
     const objectCount = room.object_ids?.length ?? 0;
     return `${room.room_type || "room"} · ${width ?? "?"}m x ${length ?? "?"}m · ${objectCount} objects`;
+  }
+
+  if (dataset === "3dfront") {
+    const width = room.dimensions?.width;
+    const length = room.dimensions?.length;
+    const objectCount = room.object_count ?? room.object_ids?.length ?? 0;
+    const shellCount = room.shell_refs?.length ?? 0;
+    return `${room.room_type || "room"} · ${width?.toFixed?.(2) ?? "?"}m x ${length?.toFixed?.(2) ?? "?"}m · ${objectCount} objects · ${shellCount} shells`;
   }
 
   const objectCount = room.object_count ?? room.objects?.length ?? 0;
@@ -377,7 +391,7 @@ export default function App() {
           </div>
           <div>
             <h1>SceneViewer</h1>
-            <p>Preview SAGE and SceneSmith scenes with repo-local renderable assets.</p>
+            <p>Preview SAGE, SceneSmith, and 3D-FRONT scenes with repo-local renderable assets.</p>
           </div>
         </div>
 

@@ -20,6 +20,7 @@ class DatasetSpec:
     default_subsets: tuple[str, ...] = ()
     recommended_subsets: tuple[str, ...] = ()
     license_note: str | None = None
+    supports_remote_download: bool = True
 
 
 DATASETS: dict[str, DatasetSpec] = {
@@ -42,6 +43,18 @@ DATASETS: dict[str, DatasetSpec] = {
             "The upstream dataset's NotGenerated subset uses HSSD assets under "
             "CC BY-NC 4.0 and is best kept opt-in."
         ),
+    ),
+    "3dfront": DatasetSpec(
+        key="3dfront",
+        repo_id="manual/3D-FRONT",
+        archive_suffix=".zip",
+        archive_prefix=None,
+        destination_root=ASSETS_ROOT / "3dfront",
+        license_note=(
+            "3D-FRONT is a manual-download dataset. Place 3D-FRONT.zip, "
+            "3D-FUTURE-model.zip, and 3D-FRONT-texture.zip in assets/ before preprocessing."
+        ),
+        supports_remote_download=False,
     ),
 }
 
