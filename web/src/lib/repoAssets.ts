@@ -28,3 +28,17 @@ export async function fetchRepoJson<T>(relativePath: string): Promise<T> {
 
   return (await response.json()) as T;
 }
+
+export async function fetchRepoText(relativePath: string): Promise<string> {
+  const url = toRepoAssetUrl(relativePath);
+  if (!url) {
+    throw new Error(`Cannot resolve repo asset URL for ${relativePath}`);
+  }
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${relativePath}: ${response.status}`);
+  }
+
+  return await response.text();
+}

@@ -15,7 +15,7 @@ import {
 import { Canvas } from "@react-three/fiber";
 import type { ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
-import { toRepoAssetUrl } from "../lib/repoAssets";
+import { fetchRepoText, toRepoAssetUrl } from "../lib/repoAssets";
 import type {
   RenderableSceneManifest,
   RenderableSageDoor,
@@ -65,6 +65,12 @@ type AssetPlacement = {
   opacity?: number;
   wireframe?: boolean;
   visible?: boolean;
+  doubleSided?: boolean;
+  transparentDepthWrite?: boolean;
+  forceSinglePass?: boolean;
+  polygonOffset?: boolean;
+  polygonOffsetFactor?: number;
+  polygonOffsetUnits?: number;
 };
 
 type SceneBounds = {
@@ -109,6 +115,11 @@ type RenderProgressSnapshot = {
 };
 
 type ProgressStageId = "download" | "parse" | "mount" | "ready";
+
+type SceneSmithShellTransform = {
+  position: Vector3Tuple;
+  rotationYDeg: number;
+};
 
 function createEmptyBatchProgress(totalCount = 0): BatchProgressSnapshot {
   return {
@@ -184,11 +195,35 @@ function computeRoomFootprint(room: RenderableSageRoom): RoomFootprint {
   };
 }
 
+function resolveWallOpacity(
+  wallDisplayMode: "solid" | "transparent" | "hidden" | "wireframe",
+  wallOpacity: number,
+): number {
+  return wallDisplayMode === "hidden" ? 0 : wallOpacity;
+}
+
 function prepareScene(
   root: THREE.Object3D,
   profile: MaterialProfile,
-  opacity = 1,
-  wireframe = false,
+  {
+    opacity = 1,
+    wireframe = false,
+    doubleSided = false,
+    transparentDepthWrite = false,
+    forceSinglePass = false,
+    polygonOffset = false,
+    polygonOffsetFactor = 1,
+    polygonOffsetUnits = 1,
+  }: {
+    opacity?: number;
+    wireframe?: boolean;
+    doubleSided?: boolean;
+    transparentDepthWrite?: boolean;
+    forceSinglePass?: boolean;
+    polygonOffset?: boolean;
+    polygonOffsetFactor?: number;
+    polygonOffsetUnits?: number;
+  } = {},
 ): THREE.Object3D {
   const clone = root.clone(true);
   clone.traverse((child) => {
@@ -211,6 +246,7 @@ function prepareScene(
         }
 
         const material = sourceMaterial.clone();
+        const isTransparent = opacity < 0.999;
         if (material instanceof THREE.MeshStandardMaterial) {
           if (material.map) {
             material.map.colorSpace = THREE.SRGBColorSpace;
@@ -224,14 +260,19 @@ function prepareScene(
             material.roughness = Math.max(material.roughness ?? 0.92, 0.78);
           }
           material.envMapIntensity = 0.9;
-          material.side = THREE.FrontSide;
         }
-        material.transparent = opacity < 0.999;
+        material.side = doubleSided || isTransparent ? THREE.DoubleSide : THREE.FrontSide;
+        material.transparent = isTransparent;
         material.opacity = opacity;
-        material.depthWrite = opacity >= 0.55;
+        material.depthWrite = isTransparent ? transparentDepthWrite : true;
         material.wireframe = wireframe;
-        if (opacity < 0.999) {
-          material.side = THREE.DoubleSide;
+        if (isTransparent) {
+          material.forceSinglePass = forceSinglePass;
+        }
+        if (polygonOffset) {
+          material.polygonOffset = true;
+          material.polygonOffsetFactor = polygonOffsetFactor;
+          material.polygonOffsetUnits = polygonOffsetUnits;
         }
         return material;
       });
@@ -245,6 +286,56 @@ function prepareScene(
 
 function sceneSmithToThree(vector: [number, number, number]): Vector3Tuple {
   return [vector[0], vector[2], vector[1]];
+}
+
+function resolveRepoRelativePath(basePath: string, relativePath: string): string {
+  const baseParts = basePath.split("/");
+  baseParts.pop();
+
+  for (const segment of relativePath.split("/")) {
+    if (!segment || segment === ".") {
+      continue;
+    }
+    if (segment === "..") {
+      if (baseParts.length > 0) {
+        baseParts.pop();
+      }
+      continue;
+    }
+    baseParts.push(segment);
+  }
+
+  return baseParts.join("/");
+}
+
+function parseSceneSmithRoomGeometryTransforms(
+  xmlText: string,
+  sdfPath: string,
+): Record<string, SceneSmithShellTransform> {
+  const parser = new DOMParser();
+  const document = parser.parseFromString(xmlText, "application/xml");
+  const transforms: Record<string, SceneSmithShellTransform> = {};
+
+  for (const visual of Array.from(document.querySelectorAll("visual"))) {
+    const uri = visual.querySelector("geometry > mesh > uri")?.textContent?.trim();
+    if (!uri) {
+      continue;
+    }
+
+    const pose = visual.querySelector("pose")?.textContent?.trim();
+    const [x = 0, y = 0, z = 0, , , yaw = 0] = (pose ?? "")
+      .split(/\s+/)
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value));
+
+    const assetPath = resolveRepoRelativePath(sdfPath, uri);
+    transforms[assetPath] = {
+      position: sceneSmithToThree([x, y, z]),
+      rotationYDeg: THREE.MathUtils.radToDeg(yaw),
+    };
+  }
+
+  return transforms;
 }
 
 function labelText(value: string | null | undefined, fallback: string): string {
@@ -383,6 +474,12 @@ function AssetModel({
   opacity,
   wireframe,
   visible = true,
+  doubleSided,
+  transparentDepthWrite,
+  forceSinglePass,
+  polygonOffset,
+  polygonOffsetFactor,
+  polygonOffsetUnits,
 }: {
   assetPath: string;
   position: Vector3Tuple;
@@ -394,6 +491,12 @@ function AssetModel({
   opacity?: number;
   wireframe?: boolean;
   visible?: boolean;
+  doubleSided?: boolean;
+  transparentDepthWrite?: boolean;
+  forceSinglePass?: boolean;
+  polygonOffset?: boolean;
+  polygonOffsetFactor?: number;
+  polygonOffsetUnits?: number;
 }) {
   const url = toRepoAssetUrl(assetPath);
   if (!url) {
@@ -403,8 +506,29 @@ function AssetModel({
   const gltf = useGLTF(url);
   const groupRef = useRef<THREE.Group | null>(null);
   const object = useMemo(
-    () => prepareScene(gltf.scene, materialProfile, opacity ?? 1, wireframe ?? false),
-    [gltf.scene, materialProfile, opacity, wireframe],
+    () =>
+      prepareScene(gltf.scene, materialProfile, {
+        opacity: opacity ?? 1,
+        wireframe: wireframe ?? false,
+        doubleSided: doubleSided ?? false,
+        transparentDepthWrite: transparentDepthWrite ?? false,
+        forceSinglePass: forceSinglePass ?? false,
+        polygonOffset: polygonOffset ?? false,
+        polygonOffsetFactor: polygonOffsetFactor ?? 1,
+        polygonOffsetUnits: polygonOffsetUnits ?? 1,
+      }),
+    [
+      doubleSided,
+      forceSinglePass,
+      gltf.scene,
+      materialProfile,
+      opacity,
+      polygonOffset,
+      polygonOffsetFactor,
+      polygonOffsetUnits,
+      transparentDepthWrite,
+      wireframe,
+    ],
   );
 
   useEffect(() => {
@@ -532,6 +656,12 @@ function BatchedAssetModels({
             opacity={item.opacity}
             wireframe={item.wireframe}
             visible={item.visible}
+            doubleSided={item.doubleSided}
+            transparentDepthWrite={item.transparentDepthWrite}
+            forceSinglePass={item.forceSinglePass}
+            polygonOffset={item.polygonOffset}
+            polygonOffsetFactor={item.polygonOffsetFactor}
+            polygonOffsetUnits={item.polygonOffsetUnits}
           />
         </Suspense>
       ))}
@@ -549,13 +679,19 @@ function LoadingProgressReporter({
   const { active, item, loaded, total, progress } = useProgress();
 
   useEffect(() => {
-    onChange({
-      active,
-      item,
-      loaded,
-      total,
-      progress,
-    });
+    const timeoutId = window.setTimeout(() => {
+      onChange({
+        active,
+        item,
+        loaded,
+        total,
+        progress,
+      });
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
   }, [active, item, loaded, onChange, progress, sceneKey, total]);
 
   return null;
@@ -741,6 +877,7 @@ function finalizeBounds(min: Vector3Tuple, max: Vector3Tuple): SceneBounds {
 function computeSceneBounds(
   scene: SceneManifest | null,
   renderScene: RenderableSceneManifest,
+  measuredShellBounds: Record<string, { center: Vector3Tuple; size: Vector3Tuple }> = {},
 ): SceneBounds {
   const min: Vector3Tuple = [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY];
   const max: Vector3Tuple = [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY];
@@ -771,7 +908,13 @@ function computeSceneBounds(
       ];
       includeBox(object.position, size);
     }
-  } else if (scene) {
+  } else {
+    const shellBounds = Object.values(measuredShellBounds);
+    for (const bounds of shellBounds) {
+      includeBox(bounds.center, bounds.size);
+    }
+
+    if (scene) {
     for (const room of scene.normalized.rooms) {
       const translation = room.frame?.translation ?? [0, 0, 0];
       const width = Math.max(room.dimensions?.width ?? 2, 1);
@@ -789,6 +932,7 @@ function computeSceneBounds(
       }
       expandBounds(minMax, object.bbox_min);
       expandBounds(minMax, object.bbox_max);
+    }
     }
   }
 
@@ -812,8 +956,7 @@ function SageRoomShell({
   const wallPanels = useMemo(() => room.walls.map((wall) => wallToPanel(wall)), [room.walls]);
   const floorTextureUrl = toRepoAssetUrl(room.floor_texture_path);
   const wallTextureUrl = toRepoAssetUrl(room.wall_texture_path);
-  const wallOpacityValue =
-    wallDisplayMode === "solid" ? 1 : wallDisplayMode === "hidden" ? 0 : wallOpacity;
+  const wallOpacityValue = resolveWallOpacity(wallDisplayMode, wallOpacity);
   const wallWireframe = wallDisplayMode === "wireframe";
   const wallVisible = wallDisplayMode !== "hidden";
 
@@ -930,8 +1073,13 @@ function PreviewContent({
   const dataset = renderScene.dataset;
   const [fitVersion, setFitVersion] = useState(0);
   const [scenesmithShellsReady, setScenesmithShellsReady] = useState(dataset !== "scenesmith");
+  const [shellTransformsLoaded, setShellTransformsLoaded] = useState(dataset !== "scenesmith");
+  const [shellTransformMap, setShellTransformMap] = useState<Record<string, SceneSmithShellTransform>>({});
   const [hoveredObjectId, setHoveredObjectId] = useState<string | null>(null);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
+  const [measuredShellBounds, setMeasuredShellBounds] = useState<
+    Record<string, { center: Vector3Tuple; size: Vector3Tuple }>
+  >({});
   const [measuredObjectBounds, setMeasuredObjectBounds] = useState<
     Record<string, { center: Vector3Tuple; size: Vector3Tuple }>
   >({});
@@ -965,25 +1113,36 @@ function PreviewContent({
     }
 
     return renderScene.room_shells.map(
-      (shell): AssetPlacement => ({
-        key: `${shell.id}::${shell.asset_path}`,
-        assetPath: shell.asset_path,
-        position: shell.position,
-        rotationYDeg: shell.rotation_y_deg,
-        scale: shell.scale,
-        opacity:
-          shell.category === "wall"
-            ? wallDisplayMode === "solid"
-              ? 1
-              : wallDisplayMode === "hidden"
-                ? 0
-                : wallOpacity
-            : 1,
-        wireframe: shell.category === "wall" && wallDisplayMode === "wireframe",
-        visible: shell.category !== "wall" || wallDisplayMode !== "hidden",
-      }),
+      (shell): AssetPlacement => {
+        const transform = shellTransformMap[shell.asset_path];
+        const wallOpacityValue = resolveWallOpacity(wallDisplayMode, wallOpacity);
+        const position = transform
+          ? ([
+              shell.position[0] + transform.position[0],
+              shell.position[1] + transform.position[1],
+              shell.position[2] + transform.position[2],
+            ] as Vector3Tuple)
+          : shell.position;
+
+        return {
+          key: `${shell.id}::${shell.asset_path}`,
+          assetPath: shell.asset_path,
+          position,
+          rotationYDeg: shell.rotation_y_deg + (transform?.rotationYDeg ?? 0),
+          scale: shell.scale,
+          opacity: shell.category === "wall" ? wallOpacityValue : 1,
+          wireframe: shell.category === "wall" && wallDisplayMode === "wireframe",
+          visible: shell.category !== "wall" || wallDisplayMode !== "hidden",
+          doubleSided: shell.category === "wall" || shell.category === "window",
+          transparentDepthWrite: false,
+          forceSinglePass: shell.category === "wall" || shell.category === "window",
+          polygonOffset: shell.category === "wall" && wallOpacityValue < 0.999,
+          polygonOffsetFactor: shell.category === "wall" ? -1 : 0,
+          polygonOffsetUnits: shell.category === "wall" ? -1 : 0,
+        };
+      },
     );
-  }, [dataset, renderScene, wallDisplayMode, wallOpacity]);
+  }, [dataset, renderScene, shellTransformMap, wallDisplayMode, wallOpacity]);
 
   const scenesmithObjectAssets = useMemo(() => {
     if (dataset !== "scenesmith") {
@@ -1000,7 +1159,10 @@ function PreviewContent({
       }),
     );
   }, [dataset, renderScene]);
-  const sceneBounds = useMemo(() => computeSceneBounds(scene, renderScene), [renderScene, scene]);
+  const sceneBounds = useMemo(
+    () => computeSceneBounds(scene, renderScene, measuredShellBounds),
+    [measuredShellBounds, renderScene, scene],
+  );
   const scenesmithShellCount = dataset === "scenesmith" ? renderScene.room_shells.length : 0;
   const inspectableObjects = useMemo((): InspectableObject[] => {
     if (renderScene.dataset === "sage") {
@@ -1091,6 +1253,60 @@ function PreviewContent({
   }, [hoveredObjectId, inspectableObjects, selectedObjectId, showObjectLabels]);
 
   useEffect(() => {
+    if (dataset !== "scenesmith" || !scene) {
+      setShellTransformMap({});
+      setShellTransformsLoaded(true);
+      return;
+    }
+
+    const roomGeometryPaths = (scene.normalized.rooms ?? [])
+      .map((room) => room.room_geometry_sdf)
+      .filter((value): value is string => Boolean(value));
+
+    if (roomGeometryPaths.length === 0) {
+      setShellTransformMap({});
+      setShellTransformsLoaded(true);
+      return;
+    }
+
+    let cancelled = false;
+    setShellTransformsLoaded(false);
+    setShellTransformMap({});
+
+    async function loadShellTransforms() {
+      try {
+        const entries = await Promise.all(
+          roomGeometryPaths.map(async (roomGeometryPath) => {
+            const xmlText = await fetchRepoText(roomGeometryPath);
+            return parseSceneSmithRoomGeometryTransforms(xmlText, roomGeometryPath);
+          }),
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        setShellTransformMap(Object.assign({}, ...entries));
+      } catch {
+        if (cancelled) {
+          return;
+        }
+        setShellTransformMap({});
+      } finally {
+        if (!cancelled) {
+          setShellTransformsLoaded(true);
+        }
+      }
+    }
+
+    void loadShellTransforms();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dataset, scene, renderScene.scene_uid]);
+
+  useEffect(() => {
     if (dataset === "sage") {
       setSageBatchProgress(createEmptyBatchProgress(sageAssets.length));
       setShellBatchProgress(createEmptyBatchProgress());
@@ -1106,14 +1322,17 @@ function PreviewContent({
   useEffect(() => {
     setScenesmithShellsReady(dataset !== "scenesmith" || scenesmithShellCount === 0);
     setFitVersion((current) => current + 1);
-  }, [dataset, renderScene.scene_uid, scenesmithShellCount]);
+  }, [dataset, renderScene.scene_uid, scenesmithShellCount, shellTransformsLoaded]);
 
   useEffect(() => {
     setHoveredObjectId(null);
     setSelectedObjectId(null);
+    setShellTransformsLoaded(dataset !== "scenesmith");
+    setShellTransformMap({});
+    setMeasuredShellBounds({});
     setMeasuredObjectBounds({});
     document.body.style.cursor = "default";
-  }, [renderScene.scene_uid]);
+  }, [dataset, renderScene.scene_uid]);
 
   useEffect(() => {
     if (dataset === "sage") {
@@ -1146,7 +1365,10 @@ function PreviewContent({
 
     let stage = "Scene ready";
     let detail = "All room shells and objects are mounted";
-    if (!scenesmithShellsReady) {
+    if (!shellTransformsLoaded) {
+      stage = "Preparing room shells";
+      detail = "Loading SceneSmith room shell transforms";
+    } else if (!scenesmithShellsReady) {
       stage = "Preparing room shells";
       detail =
         scenesmithShellAssets.length === 0
@@ -1179,6 +1401,7 @@ function PreviewContent({
     scenesmithObjectAssets.length,
     scenesmithShellAssets.length,
     scenesmithShellsReady,
+    shellTransformsLoaded,
     shellBatchProgress.complete,
     shellBatchProgress.readyCount,
   ]);
@@ -1212,6 +1435,26 @@ function PreviewContent({
     });
   }
 
+  function handleShellBounds(
+    id: string,
+    bounds: { center: Vector3Tuple; size: Vector3Tuple },
+  ) {
+    setMeasuredShellBounds((current) => {
+      const prev = current[id];
+      if (
+        prev &&
+        prev.center.every((value, index) => Math.abs(value - bounds.center[index]) < 0.0001) &&
+        prev.size.every((value, index) => Math.abs(value - bounds.size[index]) < 0.0001)
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        [id]: bounds,
+      };
+    });
+  }
+
   return (
     <>
       <ambientLight intensity={1.18} />
@@ -1221,7 +1464,10 @@ function PreviewContent({
       <PreviewEnvironment />
       <Grid
         args={[64, 64]}
-        position={[0, -0.002, 0]}
+        position={[0, -0.08, 0]}
+        renderOrder={-20}
+        material-depthTest={true}
+        material-depthWrite={false}
         cellSize={0.75}
         cellThickness={0.45}
         cellColor="#1e293b"
@@ -1278,16 +1524,19 @@ function PreviewContent({
             </>
           ) : (
             <>
-              <BatchedAssetModels
-                items={scenesmithShellAssets}
-                batchSize={24}
-                materialProfile="scenesmith"
-                onProgress={setShellBatchProgress}
-                onComplete={() => {
-                  setScenesmithShellsReady(true);
-                  setFitVersion((current) => current + 1);
-                }}
-              />
+              {shellTransformsLoaded ? (
+                <BatchedAssetModels
+                  items={scenesmithShellAssets}
+                  batchSize={24}
+                  materialProfile="scenesmith"
+                  onItemBounds={handleShellBounds}
+                  onProgress={setShellBatchProgress}
+                  onComplete={() => {
+                    setScenesmithShellsReady(true);
+                    setFitVersion((current) => current + 1);
+                  }}
+                />
+              ) : null}
               {scenesmithShellsReady ? (
                 <>
                   <BatchedAssetModels
