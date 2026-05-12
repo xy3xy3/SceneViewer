@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Boxes,
+  Check,
+  Copy,
   Database,
-  DoorOpen,
   Image as ImageIcon,
   Layers3,
   Tag,
@@ -12,7 +13,6 @@ import { ScenePreviewCanvas } from "./components/ScenePreviewCanvas";
 import { fetchRepoJson, toRepoAssetUrl } from "./lib/repoAssets";
 import type {
   DatasetCatalog,
-  DatasetCatalogEntry,
   DatasetIndex,
   NormalizedObject,
   NormalizedRoom,
@@ -83,9 +83,26 @@ function roomSubtitle(room: NormalizedRoom, dataset: SceneManifest["dataset"]): 
   return `${objectCount} objects · ${room.floor_plan_assets?.wall_gltfs?.length ?? 0} wall meshes`;
 }
 
+async function copyText(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "absolute";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+  return copied;
+}
+
 export default function App() {
   const [catalog, setCatalog] = useState<DatasetCatalog | null>(null);
-  const [renderCatalog, setRenderCatalog] = useState<RenderableDatasetCatalog | null>(null);
   const [datasetIndices, setDatasetIndices] = useState<Record<string, DatasetIndex>>({});
   const [renderDatasetIndices, setRenderDatasetIndices] = useState<
     Record<string, RenderableDatasetIndex>
@@ -101,6 +118,7 @@ export default function App() {
   const [wallOpacity, setWallOpacity] = useState(0.35);
   const [wallDisplayMode, setWallDisplayMode] = useState<WallDisplayMode>("transparent");
   const [showObjectLabels, setShowObjectLabels] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   useEffect(() => {
     let cancelled = false;
@@ -156,7 +174,6 @@ export default function App() {
         const nextIndices = Object.fromEntries(preprocessedIndices);
         const nextRenderIndices = Object.fromEntries(renderIndices);
         setCatalog(nextCatalog);
-        setRenderCatalog(nextRenderCatalog);
         setDatasetIndices(nextIndices);
         setRenderDatasetIndices(nextRenderIndices);
 
@@ -184,12 +201,6 @@ export default function App() {
       cancelled = true;
     };
   }, []);
-
-  const selectedDatasetEntry = (renderCatalog?.datasets.find(
-    (entry) => entry.dataset === selectedDataset,
-  ) ?? catalog?.datasets.find(
-    (entry) => entry.dataset === selectedDataset,
-  )) as DatasetCatalogEntry | DatasetCatalogEntry | undefined;
 
   const selectedDatasetIndex = renderDatasetIndices[selectedDataset];
   const selectedPreprocessedDatasetIndex = datasetIndices[selectedDataset];
@@ -295,6 +306,21 @@ export default function App() {
     [selectedScene],
   );
   const assetEntries = useMemo(() => sourceAssetEntries(selectedScene), [selectedScene]);
+  const selectedSceneLabel = selectedSceneRenderSummary
+    ? formatSceneLabel(
+        selectedSceneRenderSummary,
+        preprocessedSceneSummaryMap.get(selectedSceneRenderSummary.scene_uid),
+      )
+    : selectedSceneSummary?.title || selectedSceneUid || "Choose a scene";
+
+  useEffect(() => {
+    if (copyState === "idle") {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setCopyState("idle"), 1800);
+    return () => window.clearTimeout(timer);
+  }, [copyState]);
 
   function handleDatasetChange(dataset: string) {
     setSelectedDataset(dataset);
@@ -304,6 +330,20 @@ export default function App() {
 
   function handleWallOpacityChange(value: string) {
     setWallOpacity(Number(value) / 100);
+  }
+
+  async function handleCopySceneName() {
+    if (!selectedSceneLabel || selectedSceneLabel === "Choose a scene") {
+      setCopyState("failed");
+      return;
+    }
+
+    try {
+      const copied = await copyText(selectedSceneLabel);
+      setCopyState(copied ? "copied" : "failed");
+    } catch {
+      setCopyState("failed");
+    }
   }
 
   return (
@@ -398,53 +438,6 @@ export default function App() {
 
       <main className="workspace">
         <section className="preview-panel">
-          <div className="panel-head">
-            <div>
-              <p className="eyebrow">
-                {(selectedScene?.dataset || selectedRenderScene?.dataset)
-                  ? formatDatasetLabel(selectedScene?.dataset || selectedRenderScene?.dataset || "")
-                  : "Dataset"}
-              </p>
-              <h2>
-                {selectedScene?.display.title ||
-                  selectedSceneSummary?.title ||
-                  selectedSceneRenderSummary?.scene_id ||
-                  "Choose a scene"}
-              </h2>
-              <p className="panel-subtitle">
-                {selectedScene?.display.subtitle ||
-                  selectedScene?.description ||
-                  "Select a renderable scene to inspect its geometry, textures, and source assets."}
-              </p>
-            </div>
-
-            <div className="stat-strip">
-              <div className="stat-pill">
-                <Database size={14} />
-                <span>{selectedDatasetEntry?.scene_count ?? 0} scenes</span>
-              </div>
-              <div className="stat-pill">
-                <Boxes size={14} />
-                <span>
-                  {selectedScene?.stats.object_count ??
-                    selectedSceneRenderSummary?.object_count ??
-                    0}{" "}
-                  objects
-                </span>
-              </div>
-              <div className="stat-pill">
-                <DoorOpen size={14} />
-                <span>
-                  {selectedScene?.stats.room_count ??
-                    selectedSceneRenderSummary?.room_count ??
-                    selectedSceneRenderSummary?.room_shell_count ??
-                    0}{" "}
-                  rooms
-                </span>
-              </div>
-            </div>
-          </div>
-
           <ScenePreviewCanvas
             scene={selectedScene}
             renderScene={selectedRenderScene}
@@ -455,6 +448,23 @@ export default function App() {
         </section>
 
         <aside className="info-panel">
+          <div className="info-panel-header">
+            <div className="scene-identity">
+              <span>Scene Name</span>
+              <strong>{selectedSceneLabel}</strong>
+            </div>
+            <button type="button" className="scene-copy-button" onClick={handleCopySceneName}>
+              {copyState === "copied" ? <Check size={15} /> : <Copy size={15} />}
+              <span>
+                {copyState === "copied"
+                  ? "Copied"
+                  : copyState === "failed"
+                    ? "Retry"
+                    : "Copy"}
+              </span>
+            </button>
+          </div>
+
           <section className="info-card">
             <div className="section-title">
               <ScrollText size={16} />
