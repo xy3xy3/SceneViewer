@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Boxes,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   Database,
   Image as ImageIcon,
@@ -207,6 +209,13 @@ export default function App() {
   const selectedSceneRenderSummary = selectedDatasetIndex?.scenes.find(
     (scene) => scene.scene_uid === selectedSceneUid,
   );
+  const selectedSceneIndex = selectedDatasetIndex?.scenes.findIndex(
+    (scene) => scene.scene_uid === selectedSceneUid,
+  ) ?? -1;
+  const hasPreviousScene = selectedSceneIndex > 0;
+  const hasNextScene =
+    selectedSceneIndex >= 0 &&
+    selectedSceneIndex < (selectedDatasetIndex?.scenes.length ?? 0) - 1;
   const selectedSceneSummary = selectedPreprocessedDatasetIndex?.scenes.find(
     (scene) => scene.scene_uid === selectedSceneUid,
   );
@@ -332,6 +341,19 @@ export default function App() {
     setWallOpacity(Number(value) / 100);
   }
 
+  function handleSceneStep(direction: -1 | 1) {
+    if (!selectedDatasetIndex?.scenes.length || selectedSceneIndex < 0) {
+      return;
+    }
+
+    const nextScene = selectedDatasetIndex.scenes[selectedSceneIndex + direction];
+    if (!nextScene) {
+      return;
+    }
+
+    setSelectedSceneUid(nextScene.scene_uid);
+  }
+
   async function handleCopySceneName() {
     if (!selectedSceneLabel || selectedSceneLabel === "Choose a scene") {
       setCopyState("failed");
@@ -377,17 +399,37 @@ export default function App() {
 
           <label className="select-shell select-shell-scene">
             <span>Scene</span>
-            <select
-              value={selectedSceneUid}
-              onChange={(event) => setSelectedSceneUid(event.target.value)}
-              disabled={loading || !(selectedDatasetIndex?.scenes.length ?? 0)}
-            >
-              {selectedDatasetIndex?.scenes.map((scene) => (
-                <option key={scene.scene_uid} value={scene.scene_uid}>
-                  {formatSceneLabel(scene, preprocessedSceneSummaryMap.get(scene.scene_uid))}
-                </option>
-              ))}
-            </select>
+            <div className="scene-select-row">
+              <button
+                type="button"
+                className="scene-switch-button"
+                onClick={() => handleSceneStep(-1)}
+                disabled={loading || !hasPreviousScene}
+                aria-label="Previous scene"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <select
+                value={selectedSceneUid}
+                onChange={(event) => setSelectedSceneUid(event.target.value)}
+                disabled={loading || !(selectedDatasetIndex?.scenes.length ?? 0)}
+              >
+                {selectedDatasetIndex?.scenes.map((scene) => (
+                  <option key={scene.scene_uid} value={scene.scene_uid}>
+                    {formatSceneLabel(scene, preprocessedSceneSummaryMap.get(scene.scene_uid))}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="scene-switch-button"
+                onClick={() => handleSceneStep(1)}
+                disabled={loading || !hasNextScene}
+                aria-label="Next scene"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
           </label>
 
           <label className="control-shell control-shell-range">
