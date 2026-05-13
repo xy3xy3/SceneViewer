@@ -228,6 +228,7 @@ export interface RenderableSceneSmithAsset {
   asset_path: string;
   position: [number, number, number];
   rotation_y_deg: number;
+  quaternion?: [number, number, number, number] | null;
   scale: [number, number, number];
   room_id: string;
 }

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import shutil
 import zipfile
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 import numpy as np
 
@@ -118,6 +120,71 @@ def _triangulate_polygon(indices: list[int]) -> list[tuple[int, int, int]]:
 
 def _axis_swap_source_to_three(vector: tuple[float, float, float] | list[float]) -> list[float]:
     return [float(vector[0]), float(vector[2]), float(vector[1])]
+
+
+def _quaternion_from_rotation_matrix(rotation: np.ndarray) -> list[float]:
+    trace = float(rotation[0, 0] + rotation[1, 1] + rotation[2, 2])
+    if trace > 0.0:
+        scale = math.sqrt(trace + 1.0) * 2.0
+        w = 0.25 * scale
+        x = (rotation[2, 1] - rotation[1, 2]) / scale
+        y = (rotation[0, 2] - rotation[2, 0]) / scale
+        z = (rotation[1, 0] - rotation[0, 1]) / scale
+    elif rotation[0, 0] > rotation[1, 1] and rotation[0, 0] > rotation[2, 2]:
+        scale = math.sqrt(1.0 + rotation[0, 0] - rotation[1, 1] - rotation[2, 2]) * 2.0
+        w = (rotation[2, 1] - rotation[1, 2]) / scale
+        x = 0.25 * scale
+        y = (rotation[0, 1] + rotation[1, 0]) / scale
+        z = (rotation[0, 2] + rotation[2, 0]) / scale
+    elif rotation[1, 1] > rotation[2, 2]:
+        scale = math.sqrt(1.0 + rotation[1, 1] - rotation[0, 0] - rotation[2, 2]) * 2.0
+        w = (rotation[0, 2] - rotation[2, 0]) / scale
+        x = (rotation[0, 1] + rotation[1, 0]) / scale
+        y = 0.25 * scale
+        z = (rotation[1, 2] + rotation[2, 1]) / scale
+    else:
+        scale = math.sqrt(1.0 + rotation[2, 2] - rotation[0, 0] - rotation[1, 1]) * 2.0
+        w = (rotation[1, 0] - rotation[0, 1]) / scale
+        x = (rotation[0, 2] + rotation[2, 0]) / scale
+        y = (rotation[1, 2] + rotation[2, 1]) / scale
+        z = 0.25 * scale
+
+    length = math.sqrt(x * x + y * y + z * z + w * w)
+    if length <= 1e-8:
+        return [0.0, 0.0, 0.0, 1.0]
+    return [x / length, y / length, z / length, w / length]
+
+
+def _angle_axis_rotation_matrix(angle_deg: float, axis: list[float]) -> np.ndarray:
+    axis_array = np.asarray(axis[:3], dtype=float)
+    length = float(np.linalg.norm(axis_array))
+    if length <= 1e-8 or abs(angle_deg) <= 1e-8:
+        return np.identity(3, dtype=float)
+    x, y, z = axis_array / length
+    angle_rad = math.radians(angle_deg)
+    cosine = math.cos(angle_rad)
+    sine = math.sin(angle_rad)
+    one_minus_cosine = 1.0 - cosine
+    return np.array(
+        [
+            [
+                cosine + x * x * one_minus_cosine,
+                x * y * one_minus_cosine - z * sine,
+                x * z * one_minus_cosine + y * sine,
+            ],
+            [
+                y * x * one_minus_cosine + z * sine,
+                cosine + y * y * one_minus_cosine,
+                y * z * one_minus_cosine - x * sine,
+            ],
+            [
+                z * x * one_minus_cosine - y * sine,
+                z * y * one_minus_cosine + x * sine,
+                cosine + z * z * one_minus_cosine,
+            ],
+        ],
+        dtype=float,
+    )
 
 
 def _sage_vertices_to_three(vertices: np.ndarray) -> np.ndarray:
@@ -966,6 +1033,234 @@ def _scenesmith_rotation_y_deg(object_data: dict[str, object]) -> float:
     return -angle
 
 
+def _scenesmith_three_quaternion(object_data: dict[str, object]) -> list[float] | None:
+    transform = object_data.get("transform") or {}
+    rotation = transform.get("rotation_angle_axis") or {}
+    angle = float(rotation.get("angle_deg") or 0.0)
+    axis = rotation.get("axis") or [0.0, 0.0, 1.0]
+    if not isinstance(axis, list) or len(axis) < 3:
+        return None
+    rotation_source = _angle_axis_rotation_matrix(angle, axis)
+    source_to_three = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ],
+        dtype=float,
+    )
+    rotation_three = source_to_three @ rotation_source @ source_to_three.T
+    return _quaternion_from_rotation_matrix(rotation_three)
+
+
+def _scenesmith_resolve_repo_relative_path(base_path: str, relative_path: str) -> str:
+    base_parts = base_path.split("/")
+    if base_parts:
+        base_parts.pop()
+    for segment in relative_path.split("/"):
+        if not segment or segment == ".":
+            continue
+        if segment == "..":
+            if base_parts:
+                base_parts.pop()
+            continue
+        base_parts.append(segment)
+    return "/".join(base_parts)
+
+
+def _scenesmith_room_geometry_visual_asset_paths(scene_manifest: dict[str, object]) -> set[str]:
+    result: set[str] = set()
+    rooms = ((scene_manifest.get("normalized") or {}).get("rooms") or [])
+    for room in rooms:
+        if not isinstance(room, dict):
+            continue
+        room_geometry_path = room.get("room_geometry_sdf")
+        if not isinstance(room_geometry_path, str):
+            continue
+        sdf_path = REPO_ROOT / room_geometry_path
+        if not sdf_path.exists():
+            continue
+        try:
+            document = ET.fromstring(sdf_path.read_text())
+        except ET.ParseError:
+            continue
+        for visual in document.findall(".//visual"):
+            uri = visual.findtext("./geometry/mesh/uri")
+            if not uri:
+                continue
+            result.add(_scenesmith_resolve_repo_relative_path(room_geometry_path, uri.strip()))
+    return result
+
+
+def _scenesmith_gltf_bounds(asset_path: str, cache: dict[str, dict[str, float] | None]) -> dict[str, float] | None:
+    if asset_path in cache:
+        return cache[asset_path]
+
+    path = REPO_ROOT / asset_path
+    if not path.exists() or path.suffix.lower() != ".gltf":
+        cache[asset_path] = None
+        return None
+
+    try:
+        payload = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        cache[asset_path] = None
+        return None
+
+    accessors = payload.get("accessors") or []
+    meshes = payload.get("meshes") or []
+    accessor_indices: set[int] = set()
+    for mesh in meshes:
+        if not isinstance(mesh, dict):
+            continue
+        for primitive in mesh.get("primitives") or []:
+            if not isinstance(primitive, dict):
+                continue
+            attributes = primitive.get("attributes") or {}
+            position_accessor = attributes.get("POSITION")
+            if isinstance(position_accessor, int):
+                accessor_indices.add(position_accessor)
+
+    min_corner = np.array([math.inf, math.inf, math.inf], dtype=float)
+    max_corner = np.array([-math.inf, -math.inf, -math.inf], dtype=float)
+    for accessor_index in accessor_indices:
+        if accessor_index < 0 or accessor_index >= len(accessors):
+            continue
+        accessor = accessors[accessor_index]
+        if not isinstance(accessor, dict):
+            continue
+        mins = accessor.get("min")
+        maxs = accessor.get("max")
+        if not isinstance(mins, list) or not isinstance(maxs, list) or len(mins) < 3 or len(maxs) < 3:
+            continue
+        min_corner = np.minimum(min_corner, np.asarray(mins[:3], dtype=float))
+        max_corner = np.maximum(max_corner, np.asarray(maxs[:3], dtype=float))
+
+    if not np.isfinite(min_corner).all() or not np.isfinite(max_corner).all():
+        cache[asset_path] = None
+        return None
+
+    result = {
+        "size_x": float(max_corner[0] - min_corner[0]),
+        "size_y": float(max_corner[1] - min_corner[1]),
+        "size_z": float(max_corner[2] - min_corner[2]),
+        "min_y": float(min_corner[1]),
+        "max_y": float(max_corner[1]),
+    }
+    cache[asset_path] = result
+    return result
+
+
+def _scenesmith_object_text(object_data: dict[str, object]) -> str:
+    parts = [
+        object_data.get("id"),
+        object_data.get("object_type"),
+        object_data.get("description"),
+    ]
+    return " ".join(str(part) for part in parts if part).lower()
+
+
+def _is_scenesmith_seat(object_data: dict[str, object]) -> bool:
+    text = _scenesmith_object_text(object_data)
+    return "chair" in text or "stool" in text or "bench" in text
+
+
+def _is_scenesmith_surface_anchor(object_data: dict[str, object]) -> bool:
+    text = _scenesmith_object_text(object_data)
+    if not any(token in text for token in ("table", "desk", "worktable")):
+        return False
+    return not any(token in text for token in ("coffee_table", "side_table", "bedside_table", "tv_console"))
+
+
+def _rotate_xz(vector_x: float, vector_z: float, yaw_rad: float) -> tuple[float, float]:
+    cosine = math.cos(yaw_rad)
+    sine = math.sin(yaw_rad)
+    return (
+        cosine * vector_x + sine * vector_z,
+        -sine * vector_x + cosine * vector_z,
+    )
+
+
+def _scenesmith_resolve_seat_surface_penetrations(renderable_objects: list[dict[str, object]]) -> None:
+    bounds_cache: dict[str, dict[str, float] | None] = {}
+    objects_by_room: dict[str, list[dict[str, object]]] = {}
+    for obj in renderable_objects:
+        room_id = obj.get("room_id")
+        if isinstance(room_id, str):
+            objects_by_room.setdefault(room_id, []).append(obj)
+
+    gap = 0.08
+    for room_objects in objects_by_room.values():
+        surfaces = [obj for obj in room_objects if _is_scenesmith_surface_anchor(obj)]
+        seats = [obj for obj in room_objects if _is_scenesmith_seat(obj)]
+        for seat in seats:
+            seat_asset_path = seat.get("asset_path")
+            if not isinstance(seat_asset_path, str):
+                continue
+            seat_bounds = _scenesmith_gltf_bounds(seat_asset_path, bounds_cache)
+            seat_position = seat.get("position")
+            if seat_bounds is None or not isinstance(seat_position, list) or len(seat_position) < 3:
+                continue
+
+            for surface in surfaces:
+                surface_asset_path = surface.get("asset_path")
+                surface_position = surface.get("position")
+                if not isinstance(surface_asset_path, str):
+                    continue
+                if not isinstance(surface_position, list) or len(surface_position) < 3:
+                    continue
+
+                surface_bounds = _scenesmith_gltf_bounds(surface_asset_path, bounds_cache)
+                if surface_bounds is None:
+                    continue
+
+                surface_yaw_deg = float(surface.get("rotation_y_deg") or 0.0)
+                surface_yaw_rad = math.radians(surface_yaw_deg)
+                dx = float(seat_position[0]) - float(surface_position[0])
+                dz = float(seat_position[2]) - float(surface_position[2])
+                local_x, local_z = _rotate_xz(dx, dz, -surface_yaw_rad)
+
+                relative_yaw_rad = math.radians(
+                    float(seat.get("rotation_y_deg") or 0.0) - surface_yaw_deg
+                )
+                seat_half_x = 0.5 * (
+                    abs(math.cos(relative_yaw_rad)) * seat_bounds["size_x"]
+                    + abs(math.sin(relative_yaw_rad)) * seat_bounds["size_z"]
+                )
+                seat_half_z = 0.5 * (
+                    abs(math.sin(relative_yaw_rad)) * seat_bounds["size_x"]
+                    + abs(math.cos(relative_yaw_rad)) * seat_bounds["size_z"]
+                )
+                target_x = surface_bounds["size_x"] / 2.0 + seat_half_x + gap
+                target_z = surface_bounds["size_z"] / 2.0 + seat_half_z + gap
+                if abs(local_x) >= target_x or abs(local_z) >= target_z:
+                    continue
+
+                push_x = target_x - abs(local_x)
+                push_z = target_z - abs(local_z)
+                if push_x <= push_z:
+                    axis = "x"
+                    current_value = local_x
+                    target_value = target_x
+                else:
+                    axis = "z"
+                    current_value = local_z
+                    target_value = target_z
+
+                direction = 1.0 if current_value >= 0.0 else -1.0
+                if abs(current_value) <= 1e-4:
+                    direction = 1.0
+
+                if axis == "x":
+                    local_x = direction * target_value
+                else:
+                    local_z = direction * target_value
+
+                world_dx, world_dz = _rotate_xz(local_x, local_z, surface_yaw_rad)
+                seat_position[0] = float(surface_position[0]) + world_dx
+                seat_position[2] = float(surface_position[2]) + world_dz
+
+
 def build_3dfront_renderables(scene_limit: int | None = None) -> dict[str, object]:
     ensure_front3d_archives()
 
@@ -1186,6 +1481,7 @@ def build_scenesmith_renderables(scene_limit: int | None = None) -> dict[str, ob
         scene_manifest = _read_json(scene_manifest_path)
         subset = scene_manifest["subset"]
         scene_id = scene_manifest["scene_id"]
+        room_geometry_visual_assets = _scenesmith_room_geometry_visual_asset_paths(scene_manifest)
 
         room_frames = {
             room["id"]: room.get("frame", {}).get("translation") or [0.0, 0.0, 0.0]
@@ -1202,6 +1498,8 @@ def build_scenesmith_renderables(scene_limit: int | None = None) -> dict[str, ob
                 ("window", floor_plan.get("window_gltfs") or []),
             ):
                 for asset_path in asset_paths:
+                    if category == "window" and asset_path not in room_geometry_visual_assets:
+                        continue
                     room_shells.append(
                         {
                             "id": f"{room['id']}::{category}::{_scenesmith_shell_id(asset_path)}",
@@ -1232,12 +1530,15 @@ def build_scenesmith_renderables(scene_limit: int | None = None) -> dict[str, ob
                     "asset_path": asset_path,
                     "position": _axis_swap_source_to_three(world_translation),
                     "rotation_y_deg": _scenesmith_rotation_y_deg(obj),
+                    "quaternion": _scenesmith_three_quaternion(obj),
                     "scale": [1.0, 1.0, 1.0],
                     "room_id": obj["room_id"],
                     "object_type": obj.get("object_type"),
                     "description": obj.get("description"),
                 }
             )
+
+        _scenesmith_resolve_seat_surface_penetrations(renderable_objects)
 
         render_manifest = {
             "schema_version": SCHEMA_VERSION,

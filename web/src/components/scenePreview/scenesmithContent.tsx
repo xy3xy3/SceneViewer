@@ -102,9 +102,11 @@ export function SceneSmithPreviewContent({
   const [measuredShellBounds, setMeasuredShellBounds] = useState<Record<string, SceneBounds>>({});
   const [measuredObjectBounds, setMeasuredObjectBounds] = useState<Record<string, SceneBounds>>({});
   const shellAssets = useMemo(() => {
-    return renderScene.room_shells.map(
-      (shell): AssetPlacement => {
+    return renderScene.room_shells.flatMap((shell): AssetPlacement[] => {
         const transform = shellTransformMap[shell.asset_path];
+        if (shell.category === "window" && shellTransformsLoaded && !transform) {
+          return [];
+        }
         const wallOpacityValue = resolveWallOpacity(wallDisplayMode, wallOpacity);
         const position = transform
           ? ([
@@ -114,25 +116,26 @@ export function SceneSmithPreviewContent({
             ] as Vector3Tuple)
           : shell.position;
 
-        return {
-          key: `${shell.id}::${shell.asset_path}`,
-          assetPath: shell.asset_path,
-          position,
-          rotationYDeg: shell.rotation_y_deg + (transform?.rotationYDeg ?? 0),
-          scale: shell.scale,
-          opacity: shell.category === "wall" ? wallOpacityValue : 1,
-          wireframe: shell.category === "wall" && wallDisplayMode === "wireframe",
-          visible: shell.category !== "wall" || wallDisplayMode !== "hidden",
-          doubleSided: shell.category === "wall" || shell.category === "window",
-          transparentDepthWrite: false,
-          forceSinglePass: shell.category === "wall" || shell.category === "window",
-          polygonOffset: shell.category === "wall" && wallOpacityValue < 0.999,
-          polygonOffsetFactor: shell.category === "wall" ? -1 : 0,
-          polygonOffsetUnits: shell.category === "wall" ? -1 : 0,
-        };
-      },
-    );
-  }, [renderScene, shellTransformMap, wallDisplayMode, wallOpacity]);
+        return [
+          {
+            key: `${shell.id}::${shell.asset_path}`,
+            assetPath: shell.asset_path,
+            position,
+            rotationYDeg: shell.rotation_y_deg + (transform?.rotationYDeg ?? 0),
+            scale: shell.scale,
+            opacity: shell.category === "wall" ? wallOpacityValue : 1,
+            wireframe: shell.category === "wall" && wallDisplayMode === "wireframe",
+            visible: shell.category !== "wall" || wallDisplayMode !== "hidden",
+            doubleSided: shell.category === "wall" || shell.category === "window",
+            transparentDepthWrite: false,
+            forceSinglePass: shell.category === "wall" || shell.category === "window",
+            polygonOffset: shell.category === "wall" && wallOpacityValue < 0.999,
+            polygonOffsetFactor: shell.category === "wall" ? -1 : 0,
+            polygonOffsetUnits: shell.category === "wall" ? -1 : 0,
+          },
+        ];
+      });
+  }, [renderScene, shellTransformMap, shellTransformsLoaded, wallDisplayMode, wallOpacity]);
   const objectAssets = useMemo(
     () =>
       renderScene.objects.map(
@@ -141,6 +144,7 @@ export function SceneSmithPreviewContent({
           assetPath: object.asset_path,
           position: object.position,
           rotationYDeg: object.rotation_y_deg,
+          quaternion: object.quaternion,
           scale: object.scale,
         }),
       ),
@@ -210,8 +214,6 @@ export function SceneSmithPreviewContent({
 
   useEffect(() => {
     if (!needsShellTransforms) {
-      setShellTransformsLoaded(true);
-      setShellTransformMap({});
       return;
     }
 

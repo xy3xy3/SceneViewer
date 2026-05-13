@@ -89,6 +89,7 @@ function PreviewContent({
         />
       ) : (
         <SceneSmithPreviewContent
+          key={renderScene.scene_uid}
           scene={scene}
           renderScene={renderScene as RenderableSceneSmithSceneManifest}
           wallOpacity={wallOpacity}

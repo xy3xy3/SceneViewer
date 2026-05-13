@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, startTransition, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bounds,
   Edges,
@@ -747,18 +747,20 @@ export function LoadingProgressReporter({
   const { active, item, loaded, total, progress } = useProgress();
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      onChange({
-        active,
-        item,
-        loaded,
-        total,
-        progress,
+    const frameId = window.requestAnimationFrame(() => {
+      startTransition(() => {
+        onChange({
+          active,
+          item,
+          loaded,
+          total,
+          progress,
+        });
       });
-    }, 0);
+    });
 
     return () => {
-      window.clearTimeout(timeoutId);
+      window.cancelAnimationFrame(frameId);
     };
   }, [active, item, loaded, onChange, progress, sceneKey, total]);
 
