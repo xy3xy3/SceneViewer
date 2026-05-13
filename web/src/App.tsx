@@ -30,6 +30,9 @@ import "./index.css";
 type WallDisplayMode = "solid" | "transparent" | "hidden" | "wireframe";
 
 function formatDatasetLabel(dataset: string): string {
+  if (dataset === "hsm") {
+    return "HSM";
+  }
   if (dataset === "sage") {
     return "SAGE";
   }
@@ -80,7 +83,7 @@ function sourceAssetEntries(scene: SceneManifest | null) {
 }
 
 function roomSubtitle(room: NormalizedRoom, dataset: SceneManifest["dataset"]): string {
-  if (dataset === "sage") {
+  if (dataset === "sage" || dataset === "hsm") {
     const width = room.dimensions?.width;
     const length = room.dimensions?.length;
     const objectCount = room.object_ids?.length ?? 0;
@@ -391,7 +394,7 @@ export default function App() {
           </div>
           <div>
             <h1>SceneViewer</h1>
-            <p>Preview SAGE, SceneSmith, and 3D-FRONT scenes with repo-local renderable assets.</p>
+            <p>Preview HSM, SAGE, SceneSmith, and 3D-FRONT scenes with repo-local renderable assets.</p>
           </div>
         </div>
 

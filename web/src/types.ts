@@ -47,7 +47,7 @@ export interface SceneSummary {
 export interface RenderableDatasetIndex {
   schema_version: number;
   generated_at_utc: string;
-  dataset: "sage" | "scenesmith" | "3dfront";
+  dataset: "hsm" | "sage" | "scenesmith" | "3dfront";
   scene_count: number;
   shared_asset_count?: number;
   scenes: RenderableSceneSummary[];
@@ -66,7 +66,7 @@ export interface RenderableSceneSummary {
 export interface SceneManifest {
   schema_version: number;
   generated_at_utc: string;
-  dataset: "sage" | "scenesmith" | "3dfront";
+  dataset: "hsm" | "sage" | "scenesmith" | "3dfront";
   scene_id: string;
   scene_uid: string;
   subset?: string | null;
@@ -267,6 +267,36 @@ export interface RenderableSageSceneManifest {
   rooms: RenderableSageRoom[];
 }
 
+export interface RenderableHsmObject {
+  id: string;
+  asset_path: string;
+  position: [number, number, number];
+  rotation_y_deg: number;
+  quaternion?: [number, number, number, number] | null;
+  scale: [number, number, number];
+  source_id: string;
+  name?: string | null;
+  category?: string | null;
+  semantic_label?: string | null;
+  type?: string | null;
+  object_type?: string | null;
+  description?: string | null;
+  support_region_asset?: string | null;
+  support_region_surface_asset?: string | null;
+}
+
+export interface RenderableHsmSceneManifest {
+  schema_version: number;
+  generated_at_utc: string;
+  dataset: "hsm";
+  scene_id: string;
+  scene_uid: string;
+  source_scene_manifest: string;
+  objects: RenderableHsmObject[];
+  rooms: RenderableSageRoom[];
+  skipped_object_count?: number;
+}
+
 export interface RenderableSceneSmithSceneManifest {
   schema_version: number;
   generated_at_utc: string;
@@ -294,6 +324,7 @@ export interface Renderable3dFrontSceneManifest {
 }
 
 export type RenderableSceneManifest =
+  | RenderableHsmSceneManifest
   | RenderableSageSceneManifest
   | RenderableSceneSmithSceneManifest
   | Renderable3dFrontSceneManifest;

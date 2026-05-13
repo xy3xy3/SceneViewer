@@ -85,7 +85,7 @@ type SceneBounds = {
   size: Vector3Tuple;
 };
 
-type MaterialProfile = "sage" | "scenesmith" | "3dfront";
+type MaterialProfile = "sage" | "scenesmith" | "3dfront" | "hsm";
 
 type ObjectLabelPlacement = {
   id: string;
@@ -288,6 +288,16 @@ function prepareScene(
       child.frustumCulled = false;
     }
   });
+
+  if (profile === "hsm") {
+    const bounds = new THREE.Box3().setFromObject(clone);
+    if (!bounds.isEmpty()) {
+      const centerX = (bounds.min.x + bounds.max.x) / 2;
+      const centerZ = (bounds.min.z + bounds.max.z) / 2;
+      clone.position.set(-centerX, -bounds.min.y, -centerZ);
+    }
+  }
+
   return clone;
 }
 
@@ -979,6 +989,24 @@ function computeSceneBounds(
       ];
       includeBox(object.position, size);
     }
+  } else if (renderScene.dataset === "hsm") {
+    for (const room of renderScene.rooms) {
+      const footprint = computeRoomFootprint(room);
+      const ceilingHeight = Math.max(room.ceiling_height ?? room.dimensions?.height ?? 2.8, 2);
+      includeBox(
+        [footprint.center[0], ceilingHeight / 2, footprint.center[1]],
+        [footprint.size[0], ceilingHeight, footprint.size[1]],
+      );
+    }
+
+    for (const object of renderScene.objects) {
+      const size: Vector3Tuple = [
+        Math.max(Math.abs(object.scale[0]), 0.45),
+        Math.max(Math.abs(object.scale[1]), 0.45),
+        Math.max(Math.abs(object.scale[2]), 0.45),
+      ];
+      includeBox(object.position, size);
+    }
   } else {
     const shellBounds = Object.values(measuredShellBounds);
     for (const bounds of shellBounds) {
@@ -1172,7 +1200,8 @@ function PreviewContent({
   onRenderProgressChange: (snapshot: RenderProgressSnapshot) => void;
 }) {
   const dataset = renderScene.dataset;
-  const shellCount = dataset === "sage" ? 0 : renderScene.room_shells.length;
+  const isRoomLayoutDataset = dataset === "sage" || dataset === "hsm";
+  const shellCount = isRoomLayoutDataset ? 0 : renderScene.room_shells.length;
   const roomGeometryPaths = useMemo(
     () =>
       dataset === "scenesmith" && scene
@@ -1185,7 +1214,7 @@ function PreviewContent({
   const needsShellTransforms = dataset === "scenesmith" && roomGeometryPaths.length > 0;
   const [fitVersion, setFitVersion] = useState(0);
   const [scenesmithShellsReady, setScenesmithShellsReady] = useState(
-    dataset === "sage" || shellCount === 0,
+    isRoomLayoutDataset || shellCount === 0,
   );
   const [shellTransformsLoaded, setShellTransformsLoaded] = useState(!needsShellTransforms);
   const [shellTransformMap, setShellTransformMap] = useState<Record<string, SceneSmithShellTransform>>({});
@@ -1197,20 +1226,33 @@ function PreviewContent({
   const [measuredObjectBounds, setMeasuredObjectBounds] = useState<
     Record<string, { center: Vector3Tuple; size: Vector3Tuple }>
   >({});
-  const sageAssets = useMemo(() => {
-    if (dataset !== "sage") {
-      return [];
+  const roomLayoutAssets = useMemo(() => {
+    if (dataset === "sage") {
+      return renderScene.objects.map(
+        (object): AssetPlacement => ({
+          key: object.id,
+          assetPath: object.asset_path,
+          position: object.position,
+          rotationYDeg: object.rotation_y_deg,
+          scale: object.scale,
+        }),
+      );
     }
 
-    return renderScene.objects.map(
-      (object): AssetPlacement => ({
-        key: object.id,
-        assetPath: object.asset_path,
-        position: object.position,
-        rotationYDeg: object.rotation_y_deg,
-        scale: object.scale,
-      }),
-    );
+    if (dataset === "hsm") {
+      return renderScene.objects.map(
+        (object): AssetPlacement => ({
+          key: object.id,
+          assetPath: object.asset_path,
+          position: object.position,
+          rotationYDeg: object.rotation_y_deg,
+          quaternion: object.quaternion,
+          scale: object.scale,
+        }),
+      );
+    }
+
+    return [];
   }, [dataset, renderScene]);
   const scenesmithShellAssets = useMemo(() => {
     if (dataset !== "scenesmith") {
@@ -1319,13 +1361,13 @@ function PreviewContent({
     );
   }, [dataset, renderScene]);
   const [sageBatchProgress, setSageBatchProgress] = useState<BatchProgressSnapshot>(() =>
-    createEmptyBatchProgress(dataset === "sage" ? sageAssets.length : 0),
+    createEmptyBatchProgress(isRoomLayoutDataset ? roomLayoutAssets.length : 0),
   );
   const [shellBatchProgress, setShellBatchProgress] = useState<BatchProgressSnapshot>(() =>
-    createEmptyBatchProgress(dataset === "sage" ? 0 : renderScene.room_shells.length),
+    createEmptyBatchProgress(isRoomLayoutDataset ? 0 : renderScene.room_shells.length),
   );
   const [objectBatchProgress, setObjectBatchProgress] = useState<BatchProgressSnapshot>(() =>
-    createEmptyBatchProgress(dataset === "sage" ? 0 : renderScene.objects.length),
+    createEmptyBatchProgress(isRoomLayoutDataset ? 0 : renderScene.objects.length),
   );
   const sceneBounds = useMemo(
     () => computeSceneBounds(scene, renderScene, measuredShellBounds),
@@ -1345,6 +1387,30 @@ function PreviewContent({
           label: labelText(object.type || object.description, object.id),
           position: measured?.center ?? object.position,
           size: measured?.size ?? size,
+        };
+      });
+    }
+
+    if (renderScene.dataset === "hsm") {
+      return renderScene.objects.map((object) => {
+        const measured = measuredObjectBounds[object.id];
+        const preferredLabel =
+          object.name ||
+          object.semantic_label ||
+          object.object_type ||
+          object.description ||
+          object.category ||
+          object.source_id ||
+          object.id;
+        return {
+          id: object.id,
+          label: labelText(preferredLabel, object.id),
+          position: measured?.center ?? object.position,
+          size: measured?.size ?? ([
+            Math.max(Math.abs(object.scale[0]), 0.45),
+            Math.max(Math.abs(object.scale[1]), 0.45),
+            Math.max(Math.abs(object.scale[2]), 0.45),
+          ] as Vector3Tuple),
         };
       });
     }
@@ -1505,8 +1571,8 @@ function PreviewContent({
   }, []);
 
   useEffect(() => {
-    if (dataset === "sage") {
-      const total = sageAssets.length;
+    if (isRoomLayoutDataset) {
+      const total = roomLayoutAssets.length;
       const completed = Math.min(sageBatchProgress.readyCount, total);
       const ready = total === 0 || sageBatchProgress.complete;
       const progress = total === 0 ? 100 : Math.round((completed / total) * 100);
@@ -1601,10 +1667,11 @@ function PreviewContent({
     dataset,
     front3dObjectAssets.length,
     front3dShellAssets.length,
+    isRoomLayoutDataset,
     objectBatchProgress.complete,
     objectBatchProgress.readyCount,
     onRenderProgressChange,
-    sageAssets.length,
+    roomLayoutAssets.length,
     sageBatchProgress.complete,
     sageBatchProgress.readyCount,
     scenesmithObjectAssets.length,
@@ -1700,7 +1767,7 @@ function PreviewContent({
             <boxGeometry args={sceneBounds.size} />
             <meshBasicMaterial transparent opacity={0} depthWrite={false} />
           </mesh>
-          {dataset === "sage" ? (
+          {isRoomLayoutDataset ? (
             <>
               {renderScene.rooms.map((room) => (
                 <SageRoomShell
@@ -1712,11 +1779,11 @@ function PreviewContent({
               ))}
               <SageOpenings rooms={renderScene.rooms} />
               <BatchedAssetModels
-                key={`${renderScene.scene_uid}::sage-objects`}
-                items={sageAssets}
+                key={`${renderScene.scene_uid}::room-layout-objects`}
+                items={roomLayoutAssets}
                 batchSize={24}
                 onItemBounds={handleObjectBounds}
-                materialProfile="sage"
+                materialProfile={dataset === "sage" ? "sage" : dataset === "hsm" ? "hsm" : "scenesmith"}
                 onProgress={setSageBatchProgress}
               />
               <ObjectHitTargets
@@ -1846,6 +1913,8 @@ function ScenePreviewViewport({
   const badge =
     dataset === "sage"
       ? `SAGE: ${renderScene.objects.length} textured objects`
+      : dataset === "hsm"
+        ? `HSM: ${renderScene.rooms.length} procedural rooms + ${renderScene.objects.length} HSSD objects`
       : dataset === "3dfront"
         ? `3D-FRONT: ${renderScene.room_shells.length} room shells + ${renderScene.objects.length} objects`
         : `SceneSmith: ${renderScene.room_shells.length} room shells + ${renderScene.objects.length} objects`;

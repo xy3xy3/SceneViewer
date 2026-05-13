@@ -24,6 +24,17 @@ class DatasetSpec:
 
 
 DATASETS: dict[str, DatasetSpec] = {
+    "hsm": DatasetSpec(
+        key="hsm",
+        repo_id="3dlg-hcvc/hsm",
+        archive_suffix=".json",
+        archive_prefix="generated_scenes/",
+        destination_root=ASSETS_ROOT / "hsm",
+        license_note=(
+            "HSM scene JSONs are gated on Hugging Face, and renderable previews also require "
+            "local HSSD model GLBs under assets/hsm/hssd-models/."
+        ),
+    ),
     "sage": DatasetSpec(
         key="sage",
         repo_id="nvidia/SAGE-10k",

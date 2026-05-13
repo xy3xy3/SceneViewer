@@ -4,6 +4,7 @@
 
 当前支持：
 
+- `HSM`
 - `SAGE`
 - `SceneSmith`
 - `3D-FRONT`
@@ -47,6 +48,46 @@ uv run dataset-downloader preprocess sage
 # 生成 renderable 数据
 uv run dataset-downloader renderable sage
 ```
+
+以 HSM 数据集为例：
+
+```bash
+# 建立远端索引
+uv run dataset-downloader index hsm
+
+# 抽样下载 HSM generated_scenes，并自动拉取样本中命中的 support-region 标注 glb
+uv run dataset-downloader download hsm --sample-size 20 --seed 7
+
+# 预处理 sceneState JSON
+uv run dataset-downloader preprocess hsm
+
+# 生成前端可渲染清单
+uv run dataset-downloader renderable hsm
+```
+
+说明：
+
+- HSM 的 `generated_scenes/*.json` 来自 `3dlg-hcvc/hsm`。
+- 前端真正渲染对象几何时，还需要本地准备 `assets/hsm/hssd-models/objects/.../*.glb`。
+- 这个目录结构与 HSM 官方仓库对 HSSD 的依赖保持一致。
+
+如果你希望自动下载 HSSD 模型，也可以执行：
+
+```bash
+# 基于本地已经下载的 HSM scene json，只下载被这些 scene 引用到的 HSSD objects
+uv run dataset-downloader hsm-hssd
+
+# 如果还需要 decomposed parts
+uv run dataset-downloader hsm-hssd --include-decomposed
+
+# 如果要整库下载 objects（体量很大）
+uv run dataset-downloader hsm-hssd --full-objects
+```
+
+注意：
+
+- 运行前需要先在 Hugging Face 接受 `hssd/hssd-models` 与 `hssd/hssd-hab` 的 gated license。
+- 然后执行 `hf auth login`。
 
 如果你要接入 `3D-FRONT`，请先手动下载以下三个压缩包到仓库根目录的 `assets/` 下：
 

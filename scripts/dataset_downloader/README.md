@@ -11,6 +11,7 @@
 
 ## 支持的数据集
 
+- `hsm` 对应 `3dlg-hcvc/hsm`
 - `sage` 对应 `nvidia/SAGE-10k`
 - `scenesmith` 对应 `nepfaff/scenesmith-example-scenes`
 - `3dfront` 对应手动下载的 `3D-FRONT / 3D-FUTURE / 3D-FRONT-texture`
@@ -31,6 +32,10 @@
 
 ```text
 assets/
+├── hsm/
+│   ├── manifests/
+│   └── source/
+│       └── raw/
 ├── sage/
 │   ├── manifests/
 │   └── source/
@@ -73,6 +78,101 @@ uv sync
 下载抽样时建议显式指定 `--seed`。这样不同人只要使用同样的参数，就能拿到一致的抽样结果，方便复现问题和对齐测试数据。
 
 下面示例统一使用 `--seed 7`。
+
+## HSM
+
+### 1. 建立索引
+
+```bash
+uv run dataset-downloader index hsm
+```
+
+### 2. 下载数据
+
+先预览抽样结果：
+
+```bash
+uv run dataset-downloader download hsm --sample-size 20 --seed 7 --dry-run
+```
+
+确认后执行真实下载：
+
+```bash
+uv run dataset-downloader download hsm --sample-size 20 --seed 7
+```
+
+默认会下载：
+
+- `generated_scenes/scene_*.json`
+- 这些样本场景中命中的 `support_region_dataset/annot/*.glb`
+- 这些样本场景中命中的 `support_region_dataset/annot_surface/*.glb`
+
+下载后的目录默认位于：
+
+- `assets/hsm/source/raw/generated_scenes/`
+- `assets/hsm/source/raw/support_region_dataset/`
+
+### 3. 预处理数据
+
+```bash
+uv run dataset-downloader preprocess hsm
+```
+
+输出目录：
+
+- `assets/preprocessed/hsm/`
+
+### 4. 生成 renderable 数据
+
+```bash
+uv run dataset-downloader renderable hsm
+```
+
+输出目录：
+
+- `assets/renderable/hsm/`
+
+### 5. 额外依赖
+
+HSM 的场景 JSON 只描述对象摆放，不直接携带完整家具几何。要让前端真正渲染对象，还需要本地准备：
+
+- `assets/hsm/hssd-models/objects/<first-char>/<mesh-id>.glb`
+
+这与 HSM 官方仓库使用的 HSSD 目录结构保持一致。
+
+### 6. 自动下载 HSSD
+
+如果你已经先下载了一批 `generated_scenes/*.json`，可以只按这些 scene 实际引用到的 mesh id 定向下载 HSSD objects：
+
+```bash
+uv run dataset-downloader hsm-hssd
+```
+
+如果还需要 decomposed part meshes：
+
+```bash
+uv run dataset-downloader hsm-hssd --include-decomposed
+```
+
+如果你确实要下载整个 HSSD objects 树：
+
+```bash
+uv run dataset-downloader hsm-hssd --full-objects
+```
+
+常用辅助参数：
+
+```bash
+uv run dataset-downloader hsm-hssd --dry-run
+uv run dataset-downloader hsm-hssd --max-workers 16
+uv run dataset-downloader hsm-hssd --manifest /tmp/hsm-hssd.json
+```
+
+注意：
+
+- 这个命令依赖 Hugging Face 的 gated dataset 权限。
+- 开始前请先接受 `hssd/hssd-models` 和 `hssd/hssd-hab` 的 license。
+- 然后执行 `hf auth login`。
 
 ## SAGE
 

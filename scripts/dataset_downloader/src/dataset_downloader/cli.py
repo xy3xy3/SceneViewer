@@ -15,17 +15,29 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterable
 
-from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 from huggingface_hub.hf_api import RepoFile
 
 from .config import DATASETS, DatasetSpec, SCENESMITH_ALL_SUBSETS
+from .hsm import (
+    HSM_DATASET_KEY,
+    HSM_HSSD_DECOMPOSED_REPO_ID,
+    HSM_HSSD_MODELS_REPO_ID,
+    HSM_HSSD_ROOT,
+    hsm_generated_scenes_root,
+    hsm_scene_model_ids,
+    hsm_support_region_root,
+    load_hsm_scene,
+)
 from .preprocess import (
+    preprocess_hsm_dataset,
     preprocess_3dfront_dataset,
     preprocess_sage_dataset,
     preprocess_scenesmith_dataset,
     write_dataset_catalog,
 )
 from .renderable import (
+    build_hsm_renderables,
     build_3dfront_renderables,
     build_sage_renderables,
     build_scenesmith_renderables,
@@ -240,6 +252,107 @@ def _archive_local_path(destination: Path, remote: RemoteArchive) -> Path:
     return _archives_dir(DATASETS[remote.dataset], destination) / remote.path
 
 
+def _download_hsm_support_assets(
+    *,
+    spec: DatasetSpec,
+    destination: Path,
+    model_ids: set[str],
+    available_support_paths: set[str],
+    force_download: bool,
+) -> list[dict[str, object]]:
+    support_records: list[dict[str, object]] = []
+    raw_root = destination / "source" / "raw"
+    for model_id in sorted(model_ids):
+        for remote_path in (
+            f"support_region_dataset/annot/{model_id}.glb",
+            f"support_region_dataset/annot_surface/{model_id}.glb",
+        ):
+            if remote_path not in available_support_paths:
+                continue
+            downloaded_path = Path(
+                hf_hub_download(
+                    repo_id=spec.repo_id,
+                    repo_type="dataset",
+                    filename=remote_path,
+                    local_dir=raw_root,
+                    force_download=force_download,
+                )
+            )
+            support_records.append(
+                {
+                    "dataset": spec.key,
+                    "kind": "support_region_asset",
+                    "model_id": model_id,
+                    "remote_path": remote_path,
+                    "local_path": str(downloaded_path),
+                }
+            )
+    return support_records
+
+
+def download_hsm_selection(
+    spec: DatasetSpec,
+    destination: Path,
+    selection: list[RemoteArchive],
+    *,
+    force_download: bool,
+) -> list[dict[str, object]]:
+    destination.mkdir(parents=True, exist_ok=True)
+    raw_root = destination / "source" / "raw"
+    raw_root.mkdir(parents=True, exist_ok=True)
+    hsm_generated_scenes_root(destination).mkdir(parents=True, exist_ok=True)
+    hsm_support_region_root(destination).mkdir(parents=True, exist_ok=True)
+    _manifests_dir(spec, destination).mkdir(parents=True, exist_ok=True)
+
+    results: list[dict[str, object]] = []
+    model_ids: set[str] = set()
+
+    for remote in selection:
+        downloaded_path = Path(
+            hf_hub_download(
+                repo_id=spec.repo_id,
+                repo_type="dataset",
+                filename=remote.path,
+                local_dir=raw_root,
+                force_download=force_download,
+            )
+        )
+        scene_payload = load_hsm_scene(downloaded_path)
+        model_ids.update(hsm_scene_model_ids(scene_payload))
+        results.append(
+            {
+                "dataset": remote.dataset,
+                "kind": "scene_json",
+                "scene_id": remote.scene_id,
+                "remote_path": remote.path,
+                "archive_size_bytes": remote.size_bytes,
+                "local_path": str(downloaded_path),
+                "status": "downloaded",
+            }
+        )
+
+    available_support_paths = {
+        node.path
+        for node in HfApi().list_repo_tree(
+            repo_id=spec.repo_id,
+            repo_type="dataset",
+            recursive=True,
+            expand=False,
+        )
+        if isinstance(node, RepoFile) and node.path.startswith("support_region_dataset/")
+    }
+    results.extend(
+        _download_hsm_support_assets(
+            spec=spec,
+            destination=destination,
+            model_ids=model_ids,
+            available_support_paths=available_support_paths,
+            force_download=force_download,
+        )
+    )
+    return results
+
+
 def _extract_path(destination: Path, remote: RemoteArchive) -> Path:
     root = _extracted_dir(DATASETS[remote.dataset], destination)
     if remote.dataset == "sage":
@@ -367,6 +480,141 @@ def build_download_manifest(
     }
 
 
+def _collect_local_hsm_model_ids(source_root: Path) -> set[str]:
+    model_ids: set[str] = set()
+    if not source_root.exists():
+        return model_ids
+    for scene_path in sorted(source_root.rglob("*.json")):
+        try:
+            scene_payload = load_hsm_scene(scene_path)
+        except json.JSONDecodeError:
+            continue
+        model_ids.update(hsm_scene_model_ids(scene_payload))
+    return model_ids
+
+
+def _hsm_glb_patterns_for_model_ids(model_ids: set[str]) -> list[str]:
+    patterns: list[str] = []
+    for model_id in sorted(model_ids):
+        if "_part_" in model_id:
+            base_id = model_id.split("_part_", 1)[0]
+            patterns.append(f"objects/decomposed/{base_id}/{model_id}.glb")
+        else:
+            patterns.append(f"objects/{model_id[0]}/{model_id}.glb")
+    return patterns
+
+
+def build_hsm_hssd_download_manifest(
+    *,
+    destination_root: Path,
+    mode: str,
+    model_ids: set[str],
+    include_decomposed: bool,
+    full_objects: bool,
+    dry_run: bool,
+    max_workers: int,
+    records: list[dict[str, object]],
+) -> dict[str, object]:
+    return {
+        "generated_at_utc": _now_utc(),
+        "dataset": HSM_DATASET_KEY,
+        "kind": "hssd_models",
+        "destination_root": str(destination_root),
+        "mode": mode,
+        "model_id_count": len(model_ids),
+        "include_decomposed": include_decomposed,
+        "full_objects": full_objects,
+        "dry_run": dry_run,
+        "max_workers": max_workers,
+        "model_ids": sorted(model_ids),
+        "records": records,
+    }
+
+
+def download_hsm_hssd_assets(
+    *,
+    destination_root: Path,
+    source_scene_root: Path,
+    include_decomposed: bool,
+    full_objects: bool,
+    dry_run: bool,
+    force_download: bool,
+    max_workers: int,
+) -> dict[str, object]:
+    destination_root.mkdir(parents=True, exist_ok=True)
+
+    model_ids = _collect_local_hsm_model_ids(source_scene_root)
+    if not full_objects and not model_ids:
+        raise SystemExit(
+            "No local HSM scene JSONs were found to infer HSSD model ids. "
+            "Run `dataset-downloader download hsm ...` first, or use `hsm-hssd --full-objects`."
+        )
+
+    records: list[dict[str, object]] = []
+    object_patterns = ["objects/**/*"] if full_objects else _hsm_glb_patterns_for_model_ids(model_ids)
+
+    object_result = snapshot_download(
+        repo_id=HSM_HSSD_MODELS_REPO_ID,
+        repo_type="dataset",
+        local_dir=destination_root,
+        allow_patterns=object_patterns,
+        force_download=force_download,
+        max_workers=max_workers,
+        dry_run=dry_run,
+    )
+    records.append(
+        {
+            "repo_id": HSM_HSSD_MODELS_REPO_ID,
+            "target_dir": str(destination_root),
+            "pattern_count": len(object_patterns),
+            "patterns": object_patterns if len(object_patterns) <= 200 else object_patterns[:200] + ["..."],
+                "result": (
+                [item.filename for item in object_result]
+                if isinstance(object_result, list)
+                else str(object_result)
+            ),
+        }
+    )
+
+    if include_decomposed:
+        decomposed_patterns = ["objects/decomposed/**/*_part_*.glb"]
+        decomposed_result = snapshot_download(
+            repo_id=HSM_HSSD_DECOMPOSED_REPO_ID,
+            repo_type="dataset",
+            local_dir=destination_root,
+            allow_patterns=decomposed_patterns,
+            ignore_patterns=["objects/decomposed/**/*_part.*.glb"],
+            force_download=force_download,
+            max_workers=max_workers,
+            dry_run=dry_run,
+        )
+        records.append(
+            {
+                "repo_id": HSM_HSSD_DECOMPOSED_REPO_ID,
+                "target_dir": str(destination_root),
+                "pattern_count": len(decomposed_patterns),
+                "patterns": decomposed_patterns,
+                "result": (
+                    [item.filename for item in decomposed_result]
+                    if isinstance(decomposed_result, list)
+                    else str(decomposed_result)
+                ),
+            }
+        )
+
+    mode = "full_objects" if full_objects else "referenced_objects"
+    return build_hsm_hssd_download_manifest(
+        destination_root=destination_root,
+        mode=mode,
+        model_ids=model_ids,
+        include_decomposed=include_decomposed,
+        full_objects=full_objects,
+        dry_run=dry_run,
+        max_workers=max_workers,
+        records=records,
+    )
+
+
 def dataset_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("dataset", choices=sorted(DATASETS))
@@ -476,6 +724,54 @@ def dataset_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParse
         help="Optional maximum number of scenes to convert into renderable assets.",
     )
 
+    hsm_hssd_parser = subparsers.add_parser(
+        "hsm-hssd",
+        help="Download HSSD GLB assets needed for HSM rendering.",
+    )
+    hsm_hssd_parser.add_argument(
+        "--destination",
+        type=Path,
+        default=HSM_HSSD_ROOT,
+        help="Target directory for HSSD assets. Defaults to assets/hsm/hssd-models.",
+    )
+    hsm_hssd_parser.add_argument(
+        "--source-scenes",
+        type=Path,
+        default=hsm_generated_scenes_root(DATASETS[HSM_DATASET_KEY].destination_root),
+        help="Directory containing local HSM scene JSONs used to infer referenced model ids.",
+    )
+    hsm_hssd_parser.add_argument(
+        "--full-objects",
+        action="store_true",
+        help="Download the full HSSD objects tree instead of only mesh ids referenced by local HSM scenes.",
+    )
+    hsm_hssd_parser.add_argument(
+        "--include-decomposed",
+        action="store_true",
+        help="Also download decomposed part meshes from hssd/hssd-hab.",
+    )
+    hsm_hssd_parser.add_argument(
+        "--force-download",
+        action="store_true",
+        help="Force re-download even when files already exist locally.",
+    )
+    hsm_hssd_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Resolve the matching files without actually downloading them.",
+    )
+    hsm_hssd_parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=8,
+        help="Maximum concurrent download workers passed to huggingface_hub.snapshot_download.",
+    )
+    hsm_hssd_parser.add_argument(
+        "--manifest",
+        type=Path,
+        help="Optional output path for the generated HSSD download manifest JSON.",
+    )
+
 
 def _resolve_paths(args: argparse.Namespace, spec: DatasetSpec) -> tuple[Path, Path]:
     destination = (args.destination or spec.destination_root).resolve()
@@ -515,11 +811,49 @@ def main() -> None:
     dataset_parser(subparsers)
 
     args = parser.parse_args()
+    if args.command == "hsm-hssd":
+        destination_root = args.destination.resolve()
+        source_scene_root = args.source_scenes.resolve()
+        payload = download_hsm_hssd_assets(
+            destination_root=destination_root,
+            source_scene_root=source_scene_root,
+            include_decomposed=args.include_decomposed,
+            full_objects=args.full_objects,
+            dry_run=args.dry_run,
+            force_download=args.force_download,
+            max_workers=args.max_workers,
+        )
+        output = args.manifest.resolve() if args.manifest else destination_root / "manifests" / "hssd_download.json"
+        write_json(output, payload)
+        print(
+            json.dumps(
+                {
+                    "dataset": HSM_DATASET_KEY,
+                    "kind": "hssd_models",
+                    "mode": payload["mode"],
+                    "model_id_count": payload["model_id_count"],
+                    "include_decomposed": payload["include_decomposed"],
+                    "full_objects": payload["full_objects"],
+                    "dry_run": payload["dry_run"],
+                    "output": str(output),
+                    "destination": str(destination_root),
+                    "license_note": (
+                        "You must accept the gated Hugging Face licenses for "
+                        "hssd/hssd-models and hssd/hssd-hab, and authenticate with `hf auth login`."
+                    ),
+                },
+                indent=2,
+            )
+        )
+        return
+
     if args.command == "preprocess":
         targets = sorted(DATASETS) if args.dataset == "all" else [args.dataset]
         for target in targets:
             if target == "3dfront":
                 preprocess_3dfront_dataset(scene_limit=args.limit)
+            elif target == HSM_DATASET_KEY:
+                preprocess_hsm_dataset(scene_limit=args.limit)
             elif target == "sage":
                 preprocess_sage_dataset(scene_limit=args.limit)
             elif target == "scenesmith":
@@ -533,6 +867,8 @@ def main() -> None:
         for target in targets:
             if target == "3dfront":
                 build_3dfront_renderables(scene_limit=args.limit)
+            elif target == HSM_DATASET_KEY:
+                build_hsm_renderables(scene_limit=args.limit)
             elif target == "sage":
                 build_sage_renderables(scene_limit=args.limit)
             elif target == "scenesmith":
@@ -590,14 +926,22 @@ def main() -> None:
     selection = balanced_sample(filtered_archives, args.sample_size, args.seed)
     records: list[dict[str, object]] = []
     if not args.dry_run:
-        records = download_selection(
-            spec,
-            destination,
-            selection,
-            extract=not args.no_extract,
-            force_download=args.force_download,
-            force_extract=args.force_extract,
-        )
+        if spec.key == HSM_DATASET_KEY:
+            records = download_hsm_selection(
+                spec,
+                destination,
+                selection,
+                force_download=args.force_download,
+            )
+        else:
+            records = download_selection(
+                spec,
+                destination,
+                selection,
+                extract=not args.no_extract,
+                force_download=args.force_download,
+                force_extract=args.force_extract,
+            )
 
     payload = build_download_manifest(
         spec,
