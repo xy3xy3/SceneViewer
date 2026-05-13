@@ -3,72 +3,21 @@ import type { RenderableSceneSmithSceneManifest, SceneManifest } from "../../typ
 import {
   BatchedAssetModels,
   Bounds,
-  type AssetPlacement,
-  type InspectableObject,
   type RenderProgressSnapshot,
   type SceneBounds,
-  type SceneSmithShellTransform,
-  type Vector3Tuple,
   type WallDisplayMode,
   ObjectHitTargets,
   ObjectLabels,
   SceneBoundsController,
   SelectionOverlays,
   buildObjectLabels,
-  compactSceneSmithName,
   createEmptyBatchProgress,
-  createEmptyBounds,
-  expandBounds,
-  finalizeBounds,
-  labelText,
-  loadSceneSmithShellTransforms,
-  resolveWallOpacity,
-  sceneSmithToThree,
   updateMeasuredBoundsMap,
 } from "./shared";
-
-function computeSceneSmithBounds(
-  scene: SceneManifest | null,
-  measuredShellBounds: Record<string, SceneBounds>,
-): SceneBounds {
-  const min: Vector3Tuple = [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY];
-  const max: Vector3Tuple = [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY];
-  const minMax = { min, max };
-
-  function includeBox(center: Vector3Tuple, size: Vector3Tuple) {
-    const half: Vector3Tuple = [size[0] / 2, size[1] / 2, size[2] / 2];
-    expandBounds(minMax, [center[0] - half[0], center[1] - half[1], center[2] - half[2]]);
-    expandBounds(minMax, [center[0] + half[0], center[1] + half[1], center[2] + half[2]]);
-  }
-
-  for (const bounds of Object.values(measuredShellBounds)) {
-    includeBox(bounds.center, bounds.size);
-  }
-
-  if (scene) {
-    for (const room of scene.normalized.rooms) {
-      const translation = room.frame?.translation ?? [0, 0, 0];
-      const width = Math.max(room.dimensions?.width ?? 2, 1);
-      const length = Math.max(room.dimensions?.length ?? 2, 1);
-      const height = Math.max(room.dimensions?.height ?? room.ceiling_height ?? 2.8, 2);
-      includeBox([translation[0], translation[1] + height / 2, translation[2]], [width, height, length]);
-    }
-
-    for (const object of scene.normalized.objects) {
-      if (!object.bbox_min || !object.bbox_max) {
-        continue;
-      }
-      expandBounds(minMax, object.bbox_min);
-      expandBounds(minMax, object.bbox_max);
-    }
-  }
-
-  if (!Number.isFinite(min[0]) || !Number.isFinite(max[0])) {
-    return createEmptyBounds();
-  }
-
-  return finalizeBounds(min, max);
-}
+import { buildSceneSmithObjectAssets, buildSceneSmithShellAssets, sceneSmithRoomGeometryPaths } from "./scenesmith/assets";
+import { computeSceneSmithBounds } from "./scenesmith/bounds";
+import { buildSceneSmithInspectableObjects } from "./scenesmith/inspectables";
+import { useSceneSmithShellTransforms } from "./scenesmith/useSceneSmithShellTransforms";
 
 export function SceneSmithPreviewContent({
   scene,
@@ -88,66 +37,24 @@ export function SceneSmithPreviewContent({
   const [hoveredObjectId, setHoveredObjectId] = useState<string | null>(null);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [fitVersion, setFitVersion] = useState(0);
-  const roomGeometryPaths = useMemo(
-    () =>
-      (scene?.normalized.rooms ?? [])
-        .map((room) => room.room_geometry_sdf)
-        .filter((value): value is string => Boolean(value)),
-    [scene],
-  );
-  const needsShellTransforms = roomGeometryPaths.length > 0;
+  const roomGeometryPaths = useMemo(() => sceneSmithRoomGeometryPaths(scene), [scene]);
   const [shellsReady, setShellsReady] = useState(renderScene.room_shells.length === 0);
-  const [shellTransformsLoaded, setShellTransformsLoaded] = useState(!needsShellTransforms);
-  const [shellTransformMap, setShellTransformMap] = useState<Record<string, SceneSmithShellTransform>>({});
   const [measuredShellBounds, setMeasuredShellBounds] = useState<Record<string, SceneBounds>>({});
   const [measuredObjectBounds, setMeasuredObjectBounds] = useState<Record<string, SceneBounds>>({});
-  const shellAssets = useMemo(() => {
-    return renderScene.room_shells.flatMap((shell): AssetPlacement[] => {
-        const transform = shellTransformMap[shell.asset_path];
-        if (shell.category === "window" && shellTransformsLoaded && !transform) {
-          return [];
-        }
-        const wallOpacityValue = resolveWallOpacity(wallDisplayMode, wallOpacity);
-        const position = transform
-          ? ([
-              shell.position[0] + transform.position[0],
-              shell.position[1] + transform.position[1],
-              shell.position[2] + transform.position[2],
-            ] as Vector3Tuple)
-          : shell.position;
-
-        return [
-          {
-            key: `${shell.id}::${shell.asset_path}`,
-            assetPath: shell.asset_path,
-            position,
-            rotationYDeg: shell.rotation_y_deg + (transform?.rotationYDeg ?? 0),
-            scale: shell.scale,
-            opacity: shell.category === "wall" ? wallOpacityValue : 1,
-            wireframe: shell.category === "wall" && wallDisplayMode === "wireframe",
-            visible: shell.category !== "wall" || wallDisplayMode !== "hidden",
-            doubleSided: shell.category === "wall" || shell.category === "window",
-            transparentDepthWrite: false,
-            forceSinglePass: shell.category === "wall" || shell.category === "window",
-            polygonOffset: shell.category === "wall" && wallOpacityValue < 0.999,
-            polygonOffsetFactor: shell.category === "wall" ? -1 : 0,
-            polygonOffsetUnits: shell.category === "wall" ? -1 : 0,
-          },
-        ];
-      });
-  }, [renderScene, shellTransformMap, shellTransformsLoaded, wallDisplayMode, wallOpacity]);
-  const objectAssets = useMemo(
+  const { shellTransformsLoaded, shellTransformMap } = useSceneSmithShellTransforms(roomGeometryPaths);
+  const shellAssets = useMemo(
     () =>
-      renderScene.objects.map(
-        (object): AssetPlacement => ({
-          key: object.id,
-          assetPath: object.asset_path,
-          position: object.position,
-          rotationYDeg: object.rotation_y_deg,
-          quaternion: object.quaternion,
-          scale: object.scale,
-        }),
-      ),
+      buildSceneSmithShellAssets({
+        renderScene,
+        shellTransformMap,
+        shellTransformsLoaded,
+        wallDisplayMode,
+        wallOpacity,
+      }),
+    [renderScene, shellTransformMap, shellTransformsLoaded, wallDisplayMode, wallOpacity],
+  );
+  const objectAssets = useMemo(
+    () => buildSceneSmithObjectAssets(renderScene),
     [renderScene],
   );
   const [shellBatchProgress, setShellBatchProgress] = useState(() =>
@@ -160,88 +67,19 @@ export function SceneSmithPreviewContent({
     () => computeSceneSmithBounds(scene, measuredShellBounds),
     [measuredShellBounds, scene],
   );
-  const inspectableObjects = useMemo((): InspectableObject[] => {
-    const sourceObjects = new Map((scene?.normalized.objects ?? []).map((object) => [object.id, object] as const));
-    return renderScene.objects.map((object) => {
-      const measured = measuredObjectBounds[object.id];
-      const sourceObject = sourceObjects.get(object.id);
-      const bboxMin = sourceObject?.bbox_min ?? null;
-      const bboxMax = sourceObject?.bbox_max ?? null;
-      const preferredLabel =
-        compactSceneSmithName(sourceObject?.name, sourceObject?.room_id) ||
-        compactSceneSmithName(object.description, sourceObject?.room_id) ||
-        sourceObject?.object_type ||
-        object.object_type ||
-        sourceObject?.description ||
-        object.description ||
-        object.id;
-
-      if (bboxMin && bboxMax) {
-        return {
-          id: object.id,
-          label: labelText(preferredLabel, object.id),
-          position:
-            measured?.center ??
-            sceneSmithToThree([
-              (bboxMin[0] + bboxMax[0]) / 2,
-              (bboxMin[1] + bboxMax[1]) / 2,
-              (bboxMin[2] + bboxMax[2]) / 2,
-            ]),
-          size: measured?.size ?? [
-            Math.max(Math.abs(bboxMax[0] - bboxMin[0]), 0.18),
-            Math.max(Math.abs(bboxMax[2] - bboxMin[2]), 0.18),
-            Math.max(Math.abs(bboxMax[1] - bboxMin[1]), 0.18),
-          ],
-        };
-      }
-
-      return {
-        id: object.id,
-        label: labelText(preferredLabel, object.id),
-        position: measured?.center ?? object.position,
-        size: measured?.size ?? [
-          Math.max(Math.abs(object.scale[0]), 0.45),
-          Math.max(Math.abs(object.scale[1]), 0.45),
-          Math.max(Math.abs(object.scale[2]), 0.45),
-        ],
-      };
-    });
-  }, [measuredObjectBounds, renderScene, scene]);
+  const inspectableObjects = useMemo(
+    () =>
+      buildSceneSmithInspectableObjects({
+        scene,
+        renderScene,
+        measuredObjectBounds,
+      }),
+    [measuredObjectBounds, renderScene, scene],
+  );
   const objectLabels = useMemo(
     () => buildObjectLabels(inspectableObjects, showObjectLabels, selectedObjectId, hoveredObjectId),
     [hoveredObjectId, inspectableObjects, selectedObjectId, showObjectLabels],
   );
-
-  useEffect(() => {
-    if (!needsShellTransforms) {
-      return;
-    }
-
-    let cancelled = false;
-
-    async function loadTransforms() {
-      try {
-        const nextMap = await loadSceneSmithShellTransforms(roomGeometryPaths);
-        if (!cancelled) {
-          setShellTransformMap(nextMap);
-        }
-      } catch {
-        if (!cancelled) {
-          setShellTransformMap({});
-        }
-      } finally {
-        if (!cancelled) {
-          setShellTransformsLoaded(true);
-        }
-      }
-    }
-
-    void loadTransforms();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [needsShellTransforms, roomGeometryPaths]);
 
   useEffect(() => {
     const shellCompleted = Math.min(shellBatchProgress.readyCount, shellAssets.length);
