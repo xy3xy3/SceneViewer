@@ -227,6 +227,8 @@ uv run dataset-downloader renderable sage
 
 ## SceneSmith
 
+如果你手上已经有本机跑出来的 SceneSmith 输出目录，也可以直接导入，不必重新下载官方样例。
+
 ### 1. 建立索引
 
 ```bash
@@ -297,12 +299,53 @@ uv run dataset-downloader preprocess scenesmith
 ### 4. 生成 renderable 数据
 
 ```bash
-uv run dataset-downloader preprocess scenesmith
+uv run dataset-downloader renderable scenesmith
 ```
 
 这一步会基于 `assets/preprocessed/scenesmith/` 生成前端可直接消费的渲染数据，输出到：
 
 - `assets/renderable/scenesmith/`
+
+### 5. 导入本机 SceneSmith 输出
+
+如果你已经在本机 `scenesmith` 仓库里跑出了结果，例如：
+
+```text
+/home/xy3/ht/scenesmith/outputs/2026-05-18/12-41-05
+```
+
+可以直接导入这份结果并刷新 web 预览所需资产：
+
+```bash
+uv run dataset-downloader import-scenesmith-local \
+  /home/xy3/ht/scenesmith/outputs/2026-05-18/12-41-05 \
+  --build-preview
+```
+
+这个命令会做三件事：
+
+- 找到该目录下的 `scene_*` 子目录，或直接接收单个 `scene_*` 目录。
+- 把它们接到 `assets/scenesmith/source/extracted/<subset>/` 下。
+- 如果带了 `--build-preview`，会自动执行 `preprocess scenesmith` 和 `renderable scenesmith`。
+
+常用参数：
+
+```bash
+# 指定 subset 名，避免不同本地实验都落到同一组目录
+uv run dataset-downloader import-scenesmith-local /path/to/output --subset local-bedroom-run
+
+# 改成真实复制，而不是软链接
+uv run dataset-downloader import-scenesmith-local /path/to/output --mode copy
+
+# 覆盖已存在的导入目标
+uv run dataset-downloader import-scenesmith-local /path/to/output --force
+```
+
+说明：
+
+- 默认 `--mode link`，适合本机联调，速度快且不重复占磁盘。
+- 默认 subset 会从路径自动推断，例如 `outputs/2026-05-18/12-41-05` 会生成类似 `local-2026-05-18-12-41-05` 的分组。
+- 导入记录会写到 `assets/scenesmith/manifests/local_import_<subset>.json`，方便回看来源。
 
 ## 一次性预处理全部数据
 

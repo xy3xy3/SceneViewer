@@ -1190,13 +1190,27 @@ def _normalize_scenesmith_room(
     room_geometry = room_data.get("room_geometry", {})
     objects = room_data.get("objects", {})
     normalized_objects: list[dict[str, object]] = []
+    room_dir = scene_dir / f"room_{room_id}"
+    scanned_floor_plan_assets = _scan_floor_plan_assets(scene_dir, room_id)
+    scanned_generated_assets = _scan_room_generated_assets(room_dir)
+    raw_room_geometry_sdf = room_data.get("room_geometry_sdf")
+    resolved_room_geometry_sdf = _resolve_scenesmith_sdf(scene_dir, room_id, raw_room_geometry_sdf)
+    if resolved_room_geometry_sdf is None:
+        fallback_room_geometry_sdf = scene_dir / "room_geometry" / f"room_geometry_{room_id}.sdf"
+        if fallback_room_geometry_sdf.exists():
+            resolved_room_geometry_sdf = fallback_room_geometry_sdf
 
     for object_id, obj_data in objects.items():
         metadata = obj_data.get("metadata", {}) if isinstance(obj_data, dict) else {}
         raw_sdf_path = obj_data.get("sdf_path") if isinstance(obj_data, dict) else None
         raw_gltf_path = obj_data.get("gltf_path") if isinstance(obj_data, dict) else None
+        raw_geometry_path = obj_data.get("geometry_path") if isinstance(obj_data, dict) else None
         resolved_sdf = _resolve_scenesmith_sdf(scene_dir, room_id, raw_sdf_path)
-        resolved_gltf = _resolve_scenesmith_sdf(scene_dir, room_id, raw_gltf_path)
+        resolved_gltf = _resolve_scenesmith_sdf(
+            scene_dir,
+            room_id,
+            raw_gltf_path or raw_geometry_path,
+        )
         if resolved_gltf is None and resolved_sdf and resolved_sdf.exists():
             gltf_candidates = sorted(resolved_sdf.parent.glob("*.gltf"))
             if gltf_candidates:
@@ -1236,12 +1250,14 @@ def _normalize_scenesmith_room(
         "dimensions": {
             "length": room_geometry.get("length"),
             "width": room_geometry.get("width"),
-            "height": room_geometry.get("height"),
+            "height": room_geometry.get("height") or room_geometry.get("wall_height"),
         },
         "frame": room_data.get("frame"),
-        "room_geometry_sdf": room_data.get("room_geometry_sdf"),
-        "floor_plan_assets": room_data.get("floor_plan_assets"),
-        "generated_assets": room_data.get("generated_assets"),
+        "room_geometry_sdf": (
+            _repo_path(resolved_room_geometry_sdf) if resolved_room_geometry_sdf else None
+        ),
+        "floor_plan_assets": room_data.get("floor_plan_assets") or scanned_floor_plan_assets,
+        "generated_assets": room_data.get("generated_assets") or scanned_generated_assets,
         "walls": room_geometry.get("walls", []),
         "floor": room_geometry.get("floor"),
         "objects": [obj["id"] for obj in normalized_objects],

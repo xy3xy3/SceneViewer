@@ -1484,7 +1484,7 @@ def build_scenesmith_renderables(scene_limit: int | None = None) -> dict[str, ob
         room_geometry_visual_assets = _scenesmith_room_geometry_visual_asset_paths(scene_manifest)
 
         room_frames = {
-            room["id"]: room.get("frame", {}).get("translation") or [0.0, 0.0, 0.0]
+            room["id"]: ((room.get("frame") or {}).get("translation") or [0.0, 0.0, 0.0])
             for room in scene_manifest["normalized"]["rooms"]
         }
 

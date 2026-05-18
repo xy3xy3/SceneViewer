@@ -29,10 +29,11 @@ def ensure_front3d_archives() -> None:
 
 
 def repo_relative_path(path: Path) -> str:
+    absolute_path = path if path.is_absolute() else path.absolute()
     try:
-        return path.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+        return absolute_path.relative_to(REPO_ROOT.resolve()).as_posix()
     except ValueError:
-        return path.resolve().as_posix()
+        return absolute_path.resolve().as_posix()
 
 
 def safe_front3d_name(value: str) -> str:

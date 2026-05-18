@@ -5,6 +5,7 @@ import json
 import math
 import os
 import random
+import re
 import shutil
 import tarfile
 import zipfile
@@ -800,6 +801,157 @@ def _resolve_download_output(
     return manifests_dir / f"download_sample_{stamp}.json"
 
 
+def _sanitize_subset_name(value: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip()).strip("-._")
+    return sanitized or "local"
+
+
+def _default_scenesmith_import_subset(source: Path) -> str:
+    parent_name = source.parent.name
+    grandparent_name = source.parent.parent.name
+
+    if source.name.startswith("scene_"):
+        if re.fullmatch(r"\d{2}-\d{2}-\d{2}", parent_name):
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", grandparent_name):
+                return _sanitize_subset_name(f"local-{grandparent_name}-{parent_name}")
+            return _sanitize_subset_name(f"local-{parent_name}")
+        if parent_name:
+            return _sanitize_subset_name(f"local-{parent_name}")
+
+    if re.fullmatch(r"\d{2}-\d{2}-\d{2}", source.name):
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", parent_name):
+            return _sanitize_subset_name(f"local-{parent_name}-{source.name}")
+
+    return _sanitize_subset_name(f"local-{source.name}")
+
+
+def _is_scenesmith_scene_dir(path: Path) -> bool:
+    return path.is_dir() and (path / "package.xml").exists() and (path / "combined_house").is_dir()
+
+
+def _discover_local_scenesmith_scene_dirs(source: Path) -> list[Path]:
+    resolved = source.resolve()
+    if not resolved.exists():
+        raise SystemExit(f"Source path does not exist: {source}")
+
+    if _is_scenesmith_scene_dir(resolved):
+        return [resolved]
+
+    if resolved.is_dir():
+        scene_dirs = [
+            path.resolve()
+            for path in sorted(resolved.iterdir())
+            if _is_scenesmith_scene_dir(path)
+        ]
+        if scene_dirs:
+            return scene_dirs
+
+    raise SystemExit(
+        "Expected a SceneSmith scene directory or an experiment output directory containing "
+        "`scene_*` children with `package.xml` and `combined_house/`."
+    )
+
+
+def _remove_existing_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+        return
+    if path.exists():
+        shutil.rmtree(path)
+
+
+def import_local_scenesmith_output(
+    *,
+    source: Path,
+    subset: str | None,
+    destination_root: Path | None,
+    mode: str,
+    force: bool,
+    build_preview: bool,
+) -> dict[str, object]:
+    spec = DATASETS["scenesmith"]
+    resolved_source = source.resolve()
+    scene_dirs = _discover_local_scenesmith_scene_dirs(resolved_source)
+    resolved_destination = (destination_root or spec.destination_root).resolve()
+    extracted_root = _extracted_dir(spec, resolved_destination)
+    manifests_root = _manifests_dir(spec, resolved_destination)
+    subset_name = (
+        _sanitize_subset_name(subset)
+        if subset
+        else _default_scenesmith_import_subset(resolved_source)
+    )
+    subset_root = extracted_root / subset_name
+    subset_root.mkdir(parents=True, exist_ok=True)
+    manifests_root.mkdir(parents=True, exist_ok=True)
+
+    imported: list[dict[str, object]] = []
+    skipped: list[dict[str, object]] = []
+
+    for scene_dir in scene_dirs:
+        target_dir = subset_root / scene_dir.name
+        if target_dir.exists() or target_dir.is_symlink():
+            if not force:
+                skipped.append(
+                    {
+                        "scene_id": scene_dir.name,
+                        "source_dir": str(scene_dir),
+                        "target_dir": str(target_dir),
+                        "reason": "target_exists",
+                    }
+                )
+                continue
+            _remove_existing_path(target_dir)
+
+        if mode == "link":
+            target_dir.symlink_to(scene_dir, target_is_directory=True)
+        else:
+            shutil.copytree(scene_dir, target_dir)
+
+        imported.append(
+            {
+                "scene_id": scene_dir.name,
+                "source_dir": str(scene_dir),
+                "target_dir": str(target_dir),
+                "mode": mode,
+            }
+        )
+
+    payload: dict[str, object] = {
+        "generated_at_utc": _now_utc(),
+        "dataset": "scenesmith",
+        "kind": "local_import",
+        "source_root": str(resolved_source),
+        "destination_root": str(resolved_destination),
+        "subset": subset_name,
+        "mode": mode,
+        "force": force,
+        "build_preview": build_preview,
+        "imported_scene_count": len(imported),
+        "skipped_scene_count": len(skipped),
+        "imported_scenes": imported,
+        "skipped_scenes": skipped,
+    }
+
+    manifest_path = manifests_root / f"local_import_{subset_name}.json"
+    write_json(manifest_path, payload)
+    payload["manifest_path"] = str(manifest_path)
+
+    if build_preview:
+        preprocess_index = preprocess_scenesmith_dataset()
+        dataset_catalog = write_dataset_catalog()
+        renderable_index = build_scenesmith_renderables()
+        renderable_catalog = write_renderable_catalog()
+        payload["preview_build"] = {
+            "preprocessed_scene_count": preprocess_index["scene_count"],
+            "preprocessed_skipped_count": preprocess_index["skipped_count"],
+            "renderable_scene_count": renderable_index["scene_count"],
+            "datasets_in_catalog": len(dataset_catalog["datasets"]),
+            "renderable_datasets_in_catalog": len(renderable_catalog["datasets"]),
+        }
+
+    return payload
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="dataset-downloader",
@@ -809,8 +961,63 @@ def main() -> None:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     dataset_parser(subparsers)
+    import_scenesmith_parser = subparsers.add_parser(
+        "import-scenesmith-local",
+        help="Import a local SceneSmith output directory into assets/scenesmith/source/extracted/.",
+    )
+    import_scenesmith_parser.add_argument(
+        "source",
+        type=Path,
+        help=(
+            "A SceneSmith scene directory, or an experiment output directory containing "
+            "`scene_*` subdirectories."
+        ),
+    )
+    import_scenesmith_parser.add_argument(
+        "--subset",
+        type=str,
+        default=None,
+        help=(
+            "Subset name to create under assets/scenesmith/source/extracted/. "
+            "Defaults to a subset inferred from the source path."
+        ),
+    )
+    import_scenesmith_parser.add_argument(
+        "--destination",
+        type=Path,
+        default=DATASETS["scenesmith"].destination_root,
+        help="Target SceneSmith dataset root. Defaults to assets/scenesmith.",
+    )
+    import_scenesmith_parser.add_argument(
+        "--mode",
+        choices=["link", "copy"],
+        default="link",
+        help="Whether to symlink the local scene directories or copy them into the repo.",
+    )
+    import_scenesmith_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Replace existing imported scene directories with the same target path.",
+    )
+    import_scenesmith_parser.add_argument(
+        "--build-preview",
+        action="store_true",
+        help="Also refresh SceneSmith preprocessed and renderable assets after import.",
+    )
 
     args = parser.parse_args()
+    if args.command == "import-scenesmith-local":
+        payload = import_local_scenesmith_output(
+            source=args.source,
+            subset=args.subset,
+            destination_root=args.destination,
+            mode=args.mode,
+            force=args.force,
+            build_preview=args.build_preview,
+        )
+        print(json.dumps(payload, indent=2))
+        return
+
     if args.command == "hsm-hssd":
         destination_root = args.destination.resolve()
         source_scene_root = args.source_scenes.resolve()

@@ -111,6 +111,22 @@ uv run dataset-downloader renderable 3dfront --limit 8
 - `3D-FRONT-texture.zip` 提供墙面和地面贴图。
 - `--limit` 适合第一次本地联调时只生成一小批房间；去掉它即可跑更多场景。
 
+如果你已经在本机跑出了 `SceneSmith` 的结果目录，也可以直接导入现有输出，不需要重新走 Hugging Face 下载：
+
+```bash
+cd scripts/dataset_downloader
+uv sync
+uv run dataset-downloader import-scenesmith-local \
+  /path/to/scenesmith/outputs/2026-05-18/12-41-05 \
+  --build-preview
+```
+
+说明：
+
+- 这个命令会把本地 `scene_*` 输出接到 `assets/scenesmith/source/extracted/<subset>/` 下。
+- 默认使用软链接，不会重复拷贝大文件；如需真正复制可加 `--mode copy`。
+- `--build-preview` 会顺手刷新 `assets/preprocessed/scenesmith/` 和 `assets/renderable/scenesmith/`，前端就能直接预览。
+
 详细的数据集操作说明请查看 [scripts/dataset_downloader/README.md](scripts/dataset_downloader/README.md)。
 
 ### 2. 启动 Web 前端
