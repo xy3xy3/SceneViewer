@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Grid, OrbitControls } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
@@ -27,11 +27,144 @@ interface ScenePreviewCanvasProps {
   wallOpacity: number;
   wallDisplayMode: "solid" | "transparent" | "hidden" | "wireframe";
   showObjectLabels: boolean;
+  onProgressChange?: (snapshot: ScenePreviewProgressSnapshot) => void;
 }
 
 type ScenePreviewViewportProps = Omit<ScenePreviewCanvasProps, "renderScene"> & {
   renderScene: RenderableSceneManifest;
 };
+
+export interface ScenePreviewProgressSnapshot {
+  sceneUid: string;
+  currentStage: ProgressStageId;
+  statusTitle: string;
+  statusDetail: string;
+  overallProgress: number;
+  previewReady: boolean;
+  resourceActive: boolean;
+}
+
+function createProgressSnapshot(
+  sceneUid: string,
+  resourceProgress: ResourceProgressSnapshot,
+  renderProgress: RenderProgressSnapshot,
+): ScenePreviewProgressSnapshot {
+  const resourceActive = resourceProgress.active && resourceProgress.total > 0;
+  const resourceValue =
+    resourceProgress.total > 0
+      ? Math.max(0, Math.min(100, Math.round(resourceProgress.progress)))
+      : resourceActive
+        ? Math.max(0, Math.min(100, Math.round(resourceProgress.progress)))
+        : 100;
+  const renderValue = Math.max(0, Math.min(100, Math.round(renderProgress.progress)));
+  const overallProgress = Math.round(resourceValue * 0.45 + renderValue * 0.55);
+  const previewReady = !resourceActive && renderProgress.ready;
+  const parsingActive =
+    inferParsingState(resourceProgress) && !renderProgress.ready && renderValue === 0;
+  const currentStage: ProgressStageId = previewReady
+    ? "ready"
+    : resourceActive
+      ? "download"
+      : parsingActive
+        ? "parse"
+        : "mount";
+  const statusTitle =
+    currentStage === "download"
+      ? "Downloading assets"
+      : currentStage === "parse"
+        ? "Parsing models"
+        : currentStage === "mount"
+          ? "Mounting scene"
+          : "Scene ready";
+  const statusDetail =
+    currentStage === "download"
+      ? `${
+          resourceProgress.loaded && resourceProgress.total
+            ? `${resourceProgress.loaded}/${resourceProgress.total} files`
+            : "Fetching textures and models"
+        }${resourceProgress.item ? ` · ${formatProgressItemLabel(resourceProgress.item)}` : ""}`
+      : currentStage === "parse"
+        ? "Assets downloaded, preparing geometry and materials"
+        : renderProgress.detail;
+
+  return {
+    sceneUid,
+    currentStage,
+    statusTitle,
+    statusDetail,
+    overallProgress,
+    previewReady,
+    resourceActive,
+  };
+}
+
+export function ScenePreviewProgressIndicator({
+  progress,
+  className = "",
+}: {
+  progress: ScenePreviewProgressSnapshot | null;
+  className?: string;
+}) {
+  if (!progress) {
+    return null;
+  }
+
+  const { currentStage, overallProgress, previewReady, resourceActive, statusDetail, statusTitle } =
+    progress;
+  const classes = ["canvas-progress", className, previewReady ? "is-ready" : "is-busy"]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div className={classes}>
+      <div className="canvas-progress-header">
+        <strong>{statusTitle}</strong>
+        <span>{previewReady ? "Ready" : `${overallProgress}%`}</span>
+      </div>
+      <div
+        className="canvas-progress-bar"
+        role="progressbar"
+        aria-label="Scene preview loading progress"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={overallProgress}
+      >
+        <div className="canvas-progress-fill" style={{ width: `${overallProgress}%` }} />
+      </div>
+      <div className="canvas-progress-meta">
+        <span>{statusDetail}</span>
+        <span>{`Downloading assets -> Parsing models -> Mounting scene`}</span>
+      </div>
+      <div className="canvas-progress-stages" aria-hidden="true">
+        <span
+          className={`canvas-progress-stage ${
+            currentStage === "download" ? "is-current" : resourceActive ? "is-current" : "is-done"
+          }`}
+        >
+          Downloading assets
+        </span>
+        <span
+          className={`canvas-progress-stage ${
+            currentStage === "parse"
+              ? "is-current"
+              : currentStage === "mount" || currentStage === "ready"
+                ? "is-done"
+                : ""
+          }`}
+        >
+          Parsing models
+        </span>
+        <span
+          className={`canvas-progress-stage ${
+            currentStage === "mount" ? "is-current" : currentStage === "ready" ? "is-done" : ""
+          }`}
+        >
+          Mounting scene
+        </span>
+      </div>
+    </div>
+  );
+}
 
 function PreviewContent({
   scene,
@@ -108,6 +241,7 @@ function ScenePreviewViewport({
   wallOpacity,
   wallDisplayMode,
   showObjectLabels,
+  onProgressChange,
 }: ScenePreviewViewportProps) {
   const [resourceProgress, setResourceProgress] = useState<ResourceProgressSnapshot>({
     active: false,
@@ -134,96 +268,17 @@ function ScenePreviewViewport({
         : dataset === "3dfront"
           ? `3D-FRONT: ${renderScene.room_shells.length} room shells + ${renderScene.objects.length} objects`
           : `SceneSmith: ${renderScene.room_shells.length} room shells + ${renderScene.objects.length} objects`;
-  const resourceActive = resourceProgress.active && resourceProgress.total > 0;
-  const resourceValue =
-    resourceProgress.total > 0
-      ? Math.max(0, Math.min(100, Math.round(resourceProgress.progress)))
-      : resourceActive
-        ? Math.max(0, Math.min(100, Math.round(resourceProgress.progress)))
-        : 100;
-  const renderValue = Math.max(0, Math.min(100, Math.round(renderProgress.progress)));
-  const overallProgress = Math.round(resourceValue * 0.45 + renderValue * 0.55);
-  const previewReady = !resourceActive && renderProgress.ready;
-  const parsingActive = inferParsingState(resourceProgress) && !renderProgress.ready && renderValue === 0;
-  const currentStage: ProgressStageId = previewReady
-    ? "ready"
-    : resourceActive
-      ? "download"
-      : parsingActive
-        ? "parse"
-        : "mount";
-  const statusTitle =
-    currentStage === "download"
-      ? "Downloading assets"
-      : currentStage === "parse"
-        ? "Parsing models"
-        : currentStage === "mount"
-          ? "Mounting scene"
-          : "Scene ready";
-  const statusDetail =
-    currentStage === "download"
-      ? `${
-          resourceProgress.loaded && resourceProgress.total
-            ? `${resourceProgress.loaded}/${resourceProgress.total} files`
-            : "Fetching textures and models"
-        }${resourceProgress.item ? ` · ${formatProgressItemLabel(resourceProgress.item)}` : ""}`
-      : currentStage === "parse"
-        ? "Assets downloaded, preparing geometry and materials"
-        : renderProgress.detail;
+  const progressSnapshot = useMemo(
+    () => createProgressSnapshot(renderScene.scene_uid, resourceProgress, renderProgress),
+    [renderProgress, renderScene.scene_uid, resourceProgress],
+  );
+
+  useEffect(() => {
+    onProgressChange?.(progressSnapshot);
+  }, [onProgressChange, progressSnapshot]);
 
   return (
     <div className="canvas-shell">
-      <div className={`canvas-progress ${previewReady ? "is-ready" : "is-busy"}`}>
-        <div className="canvas-progress-header">
-          <strong>{statusTitle}</strong>
-          <span>{previewReady ? "Ready" : `${overallProgress}%`}</span>
-        </div>
-        <div
-          className="canvas-progress-bar"
-          role="progressbar"
-          aria-label="Scene preview loading progress"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={overallProgress}
-        >
-          <div className="canvas-progress-fill" style={{ width: `${overallProgress}%` }} />
-        </div>
-        <div className="canvas-progress-meta">
-          <span>{statusDetail}</span>
-          <span>{`Downloading assets -> Parsing models -> Mounting scene`}</span>
-        </div>
-        <div className="canvas-progress-stages" aria-hidden="true">
-          <span
-            className={`canvas-progress-stage ${
-              currentStage === "download" ? "is-current" : resourceActive ? "is-current" : "is-done"
-            }`}
-          >
-            Downloading assets
-          </span>
-          <span
-            className={`canvas-progress-stage ${
-              currentStage === "parse"
-                ? "is-current"
-                : currentStage === "mount" || currentStage === "ready"
-                  ? "is-done"
-                  : ""
-            }`}
-          >
-            Parsing models
-          </span>
-          <span
-            className={`canvas-progress-stage ${
-              currentStage === "mount"
-                ? "is-current"
-                : currentStage === "ready"
-                  ? "is-done"
-                  : ""
-            }`}
-          >
-            Mounting scene
-          </span>
-        </div>
-      </div>
       <Canvas
         shadows
         camera={{ position: [8, 7, 8], fov: 42, near: 0.1, far: 300 }}

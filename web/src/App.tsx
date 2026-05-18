@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Boxes,
   Check,
@@ -11,7 +11,11 @@ import {
   Tag,
   ScrollText,
 } from "lucide-react";
-import { ScenePreviewCanvas } from "./components/ScenePreviewCanvas";
+import {
+  ScenePreviewCanvas,
+  ScenePreviewProgressIndicator,
+  type ScenePreviewProgressSnapshot,
+} from "./components/ScenePreviewCanvas";
 import { fetchRepoJson, toRepoAssetUrl } from "./lib/repoAssets";
 import type {
   DatasetCatalog,
@@ -138,6 +142,9 @@ export default function App() {
   const [wallDisplayMode, setWallDisplayMode] = useState<WallDisplayMode>("transparent");
   const [showObjectLabels, setShowObjectLabels] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [previewProgress, setPreviewProgress] = useState<ScenePreviewProgressSnapshot | null>(
+    null,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -325,6 +332,8 @@ export default function App() {
   const selectedRenderScene = selectedSceneRenderSummary
     ? renderSceneCache[selectedSceneRenderSummary.scene_uid] ?? null
     : null;
+  const visiblePreviewProgress =
+    previewProgress?.sceneUid === selectedRenderScene?.scene_uid ? previewProgress : null;
 
   const previewImages = useMemo(() => collectPreviewImages(selectedScene), [selectedScene]);
   const objectTypeSummary = useMemo(
@@ -357,6 +366,10 @@ export default function App() {
   function handleWallOpacityChange(value: string) {
     setWallOpacity(Number(value) / 100);
   }
+
+  const handlePreviewProgressChange = useCallback((snapshot: ScenePreviewProgressSnapshot) => {
+    setPreviewProgress(snapshot);
+  }, []);
 
   function handleSceneStep(direction: -1 | 1) {
     if (!selectedDatasetIndex?.scenes.length || selectedSceneIndex < 0) {
@@ -491,6 +504,13 @@ export default function App() {
             </div>
           </label>
         </div>
+
+        {selectedRenderScene ? (
+          <ScenePreviewProgressIndicator
+            progress={visiblePreviewProgress}
+            className="topbar-progress"
+          />
+        ) : null}
       </header>
 
       {error ? <div className="error-banner">{error}</div> : null}
@@ -503,6 +523,7 @@ export default function App() {
             wallOpacity={wallOpacity}
             wallDisplayMode={wallDisplayMode}
             showObjectLabels={showObjectLabels}
+            onProgressChange={handlePreviewProgressChange}
           />
         </section>
 
