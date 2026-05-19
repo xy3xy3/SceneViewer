@@ -145,6 +145,9 @@ export default function App() {
   const [previewProgress, setPreviewProgress] = useState<ScenePreviewProgressSnapshot | null>(
     null,
   );
+  const [hiddenReadyProgressSceneUid, setHiddenReadyProgressSceneUid] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -334,6 +337,11 @@ export default function App() {
     : null;
   const visiblePreviewProgress =
     previewProgress?.sceneUid === selectedRenderScene?.scene_uid ? previewProgress : null;
+  const topbarPreviewProgress =
+    visiblePreviewProgress?.previewReady &&
+    hiddenReadyProgressSceneUid === visiblePreviewProgress.sceneUid
+      ? null
+      : visiblePreviewProgress;
 
   const previewImages = useMemo(() => collectPreviewImages(selectedScene), [selectedScene]);
   const objectTypeSummary = useMemo(
@@ -356,6 +364,18 @@ export default function App() {
     const timer = window.setTimeout(() => setCopyState("idle"), 1800);
     return () => window.clearTimeout(timer);
   }, [copyState]);
+
+  useEffect(() => {
+    if (!visiblePreviewProgress?.previewReady) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setHiddenReadyProgressSceneUid(visiblePreviewProgress.sceneUid);
+    }, 1000);
+
+    return () => window.clearTimeout(timer);
+  }, [visiblePreviewProgress?.previewReady, visiblePreviewProgress?.sceneUid]);
 
   function handleDatasetChange(dataset: string) {
     setSelectedDataset(dataset);
@@ -507,7 +527,7 @@ export default function App() {
 
         {selectedRenderScene ? (
           <ScenePreviewProgressIndicator
-            progress={visiblePreviewProgress}
+            progress={topbarPreviewProgress}
             className="topbar-progress"
           />
         ) : null}
