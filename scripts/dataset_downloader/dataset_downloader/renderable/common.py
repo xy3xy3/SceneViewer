@@ -324,6 +324,8 @@ def _write_renderable_progress(
         shared_asset_count=shared_asset_count,
     )
     _write_json(_renderable_index_path(dataset), index)
+    from .catalog import write_renderable_catalog
+
     write_renderable_catalog()
     return index
 
