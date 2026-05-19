@@ -283,7 +283,7 @@ function prepareScene(
 }
 
 export function sceneSmithToThree(vector: [number, number, number]): Vector3Tuple {
-  return [vector[0], vector[2], vector[1]];
+  return [vector[0], vector[2], -vector[1]];
 }
 
 function resolveRepoRelativePath(basePath: string, relativePath: string): string {

@@ -322,10 +322,18 @@ uv run dataset-downloader import-scenesmith-local \
   --build-preview
 ```
 
+如果要把 `outputs` 下面所有本地实验一次性导入，可以直接传根目录：
+
+```bash
+uv run dataset-downloader import-scenesmith-local \
+  /home/xy3/ht/scenesmith/outputs \
+  --build-preview
+```
+
 这个命令会做三件事：
 
-- 找到该目录下的 `scene_*` 子目录，或直接接收单个 `scene_*` 目录。
-- 把它们接到 `assets/scenesmith/source/extracted/<subset>/` 下。
+- 找到该目录下的 `scene_*` 子目录，直接接收单个 `scene_*` 目录，或递归发现 `outputs` 根目录下所有有效结果。
+- 把它们接到 `assets/scenesmith/source/extracted/<subset>/` 下；批量导入时 subset 会按实验目录自动推断，例如 `local-2026-05-18-12-41-05`。
 - 如果带了 `--build-preview`，会自动执行 `preprocess scenesmith` 和 `renderable scenesmith`。
 
 常用参数：
@@ -334,16 +342,23 @@ uv run dataset-downloader import-scenesmith-local \
 # 指定 subset 名，避免不同本地实验都落到同一组目录
 uv run dataset-downloader import-scenesmith-local /path/to/output --subset local-bedroom-run
 
+# 对整个 outputs 根目录指定同一个 subset 时，目标 scene 会自动加实验名前缀以避免 scene_000 冲突
+uv run dataset-downloader import-scenesmith-local /home/xy3/ht/scenesmith/outputs --subset all-local
+
 # 改成真实复制，而不是软链接
 uv run dataset-downloader import-scenesmith-local /path/to/output --mode copy
 
-# 覆盖已存在的导入目标
+# 覆盖已存在的导入目标；这是默认行为
 uv run dataset-downloader import-scenesmith-local /path/to/output --force
+
+# 保留已存在的导入目标，重复项自动跳过
+uv run dataset-downloader import-scenesmith-local /path/to/output --no-force
 ```
 
 说明：
 
 - 默认 `--mode link`，适合本机联调，速度快且不重复占磁盘。
+- 无效或不完整的 `scene_*` 目录会记录为 skipped，不会中断其它结果导入。
 - 默认 subset 会从路径自动推断，例如 `outputs/2026-05-18/12-41-05` 会生成类似 `local-2026-05-18-12-41-05` 的分组。
 - 导入记录会写到 `assets/scenesmith/manifests/local_import_<subset>.json`，方便回看来源。
 

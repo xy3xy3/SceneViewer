@@ -119,7 +119,7 @@ def _triangulate_polygon(indices: list[int]) -> list[tuple[int, int, int]]:
 
 
 def _axis_swap_source_to_three(vector: tuple[float, float, float] | list[float]) -> list[float]:
-    return [float(vector[0]), float(vector[2]), float(vector[1])]
+    return [float(vector[0]), float(vector[2]), -float(vector[1])]
 
 
 def _quaternion_from_rotation_matrix(rotation: np.ndarray) -> list[float]:
@@ -155,6 +155,41 @@ def _quaternion_from_rotation_matrix(rotation: np.ndarray) -> list[float]:
     return [x / length, y / length, z / length, w / length]
 
 
+def _rotation_matrix_from_wxyz(quaternion: list[float]) -> np.ndarray:
+    if len(quaternion) < 4:
+        return np.identity(3, dtype=float)
+
+    w, x, y, z = (float(value) for value in quaternion[:4])
+    length = math.sqrt(w * w + x * x + y * y + z * z)
+    if length <= 1e-8:
+        return np.identity(3, dtype=float)
+
+    w /= length
+    x /= length
+    y /= length
+    z /= length
+    return np.array(
+        [
+            [
+                1.0 - 2.0 * (y * y + z * z),
+                2.0 * (x * y - z * w),
+                2.0 * (x * z + y * w),
+            ],
+            [
+                2.0 * (x * y + z * w),
+                1.0 - 2.0 * (x * x + z * z),
+                2.0 * (y * z - x * w),
+            ],
+            [
+                2.0 * (x * z - y * w),
+                2.0 * (y * z + x * w),
+                1.0 - 2.0 * (x * x + y * y),
+            ],
+        ],
+        dtype=float,
+    )
+
+
 def _angle_axis_rotation_matrix(angle_deg: float, axis: list[float]) -> np.ndarray:
     axis_array = np.asarray(axis[:3], dtype=float)
     length = float(np.linalg.norm(axis_array))
@@ -185,6 +220,37 @@ def _angle_axis_rotation_matrix(angle_deg: float, axis: list[float]) -> np.ndarr
         ],
         dtype=float,
     )
+
+
+def _scenesmith_source_rotation_matrix(object_data: dict[str, object]) -> np.ndarray:
+    transform = object_data.get("transform") or {}
+    if not isinstance(transform, dict):
+        return np.identity(3, dtype=float)
+
+    rotation_wxyz = transform.get("rotation_wxyz")
+    if isinstance(rotation_wxyz, list) and len(rotation_wxyz) >= 4:
+        return _rotation_matrix_from_wxyz(rotation_wxyz)
+
+    rotation = transform.get("rotation_angle_axis") or {}
+    if not isinstance(rotation, dict):
+        return np.identity(3, dtype=float)
+    angle = float(rotation.get("angle_deg") or 0.0)
+    axis = rotation.get("axis") or [0.0, 0.0, 1.0]
+    if not isinstance(axis, list) or len(axis) < 3:
+        return np.identity(3, dtype=float)
+    return _angle_axis_rotation_matrix(angle, axis)
+
+
+def _scenesmith_source_rotation_to_three(rotation_source: np.ndarray) -> np.ndarray:
+    source_to_three = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, -1.0, 0.0],
+        ],
+        dtype=float,
+    )
+    return source_to_three @ rotation_source @ source_to_three.T
 
 
 def _sage_vertices_to_three(vertices: np.ndarray) -> np.ndarray:
@@ -1023,33 +1089,16 @@ def build_sage_renderables(scene_limit: int | None = None) -> dict[str, object]:
 
 
 def _scenesmith_rotation_y_deg(object_data: dict[str, object]) -> float:
-    transform = object_data.get("transform") or {}
-    rotation = transform.get("rotation_angle_axis") or {}
-    angle = float(rotation.get("angle_deg") or 0.0)
-    axis = rotation.get("axis") or [0.0, 0.0, 1.0]
-    axis_z = float(axis[2] if len(axis) >= 3 else 1.0)
-    if axis_z < 0.0:
-        angle *= -1.0
-    return -angle
+    rotation_three = _scenesmith_source_rotation_to_three(
+        _scenesmith_source_rotation_matrix(object_data)
+    )
+    return math.degrees(math.atan2(float(rotation_three[0, 2]), float(rotation_three[0, 0])))
 
 
 def _scenesmith_three_quaternion(object_data: dict[str, object]) -> list[float] | None:
-    transform = object_data.get("transform") or {}
-    rotation = transform.get("rotation_angle_axis") or {}
-    angle = float(rotation.get("angle_deg") or 0.0)
-    axis = rotation.get("axis") or [0.0, 0.0, 1.0]
-    if not isinstance(axis, list) or len(axis) < 3:
-        return None
-    rotation_source = _angle_axis_rotation_matrix(angle, axis)
-    source_to_three = np.array(
-        [
-            [1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [0.0, 1.0, 0.0],
-        ],
-        dtype=float,
+    rotation_three = _scenesmith_source_rotation_to_three(
+        _scenesmith_source_rotation_matrix(object_data)
     )
-    rotation_three = source_to_three @ rotation_source @ source_to_three.T
     return _quaternion_from_rotation_matrix(rotation_three)
 
 
@@ -1537,8 +1586,6 @@ def build_scenesmith_renderables(scene_limit: int | None = None) -> dict[str, ob
                     "description": obj.get("description"),
                 }
             )
-
-        _scenesmith_resolve_seat_surface_penetrations(renderable_objects)
 
         render_manifest = {
             "schema_version": SCHEMA_VERSION,

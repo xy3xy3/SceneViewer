@@ -3,6 +3,7 @@ import {
   createEmptyBounds,
   expandBounds,
   finalizeBounds,
+  sceneSmithToThree,
   type SceneBounds,
   type Vector3Tuple,
 } from "../shared";
@@ -31,15 +32,18 @@ export function computeSceneSmithBounds(
       const width = Math.max(room.dimensions?.width ?? 2, 1);
       const length = Math.max(room.dimensions?.length ?? 2, 1);
       const height = Math.max(room.dimensions?.height ?? room.ceiling_height ?? 2.8, 2);
-      includeBox([translation[0], translation[1] + height / 2, translation[2]], [width, height, length]);
+      includeBox(
+        sceneSmithToThree([translation[0], translation[1], translation[2] + height / 2]),
+        [width, height, length],
+      );
     }
 
     for (const object of scene.normalized.objects) {
       if (!object.bbox_min || !object.bbox_max) {
         continue;
       }
-      expandBounds(minMax, object.bbox_min);
-      expandBounds(minMax, object.bbox_max);
+      expandBounds(minMax, sceneSmithToThree(object.bbox_min));
+      expandBounds(minMax, sceneSmithToThree(object.bbox_max));
     }
   }
 

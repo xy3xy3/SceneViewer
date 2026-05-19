@@ -121,10 +121,19 @@ uv run dataset-downloader import-scenesmith-local \
   --build-preview
 ```
 
+也可以直接导入整个 `outputs` 根目录，命令会递归发现所有有效的 `scene_*` 结果：
+
+```bash
+uv run dataset-downloader import-scenesmith-local \
+  /home/xy3/ht/scenesmith/outputs \
+  --build-preview
+```
+
 说明：
 
 - 这个命令会把本地 `scene_*` 输出接到 `assets/scenesmith/source/extracted/<subset>/` 下。
 - 默认使用软链接，不会重复拷贝大文件；如需真正复制可加 `--mode copy`。
+- 重复结果默认覆盖已有 view 导入；如需保留已有结果并跳过重复项，可加 `--no-force`。
 - `--build-preview` 会顺手刷新 `assets/preprocessed/scenesmith/` 和 `assets/renderable/scenesmith/`，前端就能直接预览。
 
 详细的数据集操作说明请查看 [scripts/dataset_downloader/README.md](scripts/dataset_downloader/README.md)。

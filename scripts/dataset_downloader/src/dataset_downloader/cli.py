@@ -829,6 +829,15 @@ def _is_scenesmith_scene_dir(path: Path) -> bool:
     return path.is_dir() and (path / "package.xml").exists() and (path / "combined_house").is_dir()
 
 
+def _has_scenesmith_scene_ancestor(path: Path, stop_at: Path) -> bool:
+    for parent in path.parents:
+        if parent == stop_at:
+            return False
+        if _is_scenesmith_scene_dir(parent):
+            return True
+    return False
+
+
 def _discover_local_scenesmith_scene_dirs(source: Path) -> list[Path]:
     resolved = source.resolve()
     if not resolved.exists():
@@ -852,6 +861,67 @@ def _discover_local_scenesmith_scene_dirs(source: Path) -> list[Path]:
     )
 
 
+def _discover_local_scenesmith_import_groups(
+    source: Path,
+) -> tuple[list[tuple[str, list[Path]]], list[dict[str, object]]]:
+    resolved = source.resolve()
+    if not resolved.exists():
+        raise SystemExit(f"Source path does not exist: {source}")
+
+    if _is_scenesmith_scene_dir(resolved):
+        return [(_default_scenesmith_import_subset(resolved), [resolved])], []
+
+    direct_scene_dirs = (
+        [
+            path.resolve()
+            for path in sorted(resolved.iterdir())
+            if _is_scenesmith_scene_dir(path)
+        ]
+        if resolved.is_dir()
+        else []
+    )
+    if direct_scene_dirs:
+        return [(_default_scenesmith_import_subset(resolved), direct_scene_dirs)], []
+
+    if not resolved.is_dir():
+        raise SystemExit(
+            "Expected a SceneSmith scene directory, an experiment output directory, or an outputs root."
+        )
+
+    grouped: dict[str, list[Path]] = {}
+    skipped: list[dict[str, object]] = []
+    candidate_dirs = [
+        path.resolve()
+        for path in sorted(resolved.rglob("scene_*"))
+        if path.is_dir()
+    ]
+    for candidate in candidate_dirs:
+        if _has_scenesmith_scene_ancestor(candidate, resolved):
+            continue
+        if _is_scenesmith_scene_dir(candidate):
+            subset_name = _default_scenesmith_import_subset(candidate)
+            grouped.setdefault(subset_name, []).append(candidate)
+            continue
+        skipped.append(
+            {
+                "scene_id": candidate.name,
+                "source_dir": str(candidate),
+                "reason": "invalid_scene_dir",
+            }
+        )
+
+    if grouped:
+        return [
+            (subset_name, scene_dirs)
+            for subset_name, scene_dirs in sorted(grouped.items())
+        ], skipped
+
+    raise SystemExit(
+        "Did not find any valid SceneSmith `scene_*` directories under "
+        f"{source}. A valid scene needs `package.xml` and `combined_house/`."
+    )
+
+
 def _remove_existing_path(path: Path) -> None:
     if path.is_symlink() or path.is_file():
         path.unlink()
@@ -871,50 +941,92 @@ def import_local_scenesmith_output(
 ) -> dict[str, object]:
     spec = DATASETS["scenesmith"]
     resolved_source = source.resolve()
-    scene_dirs = _discover_local_scenesmith_scene_dirs(resolved_source)
+    discovered_groups, discovery_skipped = _discover_local_scenesmith_import_groups(
+        resolved_source
+    )
+    if subset is None:
+        import_groups = [
+            (
+                subset_name,
+                [(scene_dir, scene_dir.name) for scene_dir in scene_dirs],
+            )
+            for subset_name, scene_dirs in discovered_groups
+        ]
+    else:
+        scene_name_counts: dict[str, int] = defaultdict(int)
+        for _, grouped_scene_dirs in discovered_groups:
+            for scene_dir in grouped_scene_dirs:
+                scene_name_counts[scene_dir.name] += 1
+
+        scene_dirs = []
+        for source_subset_name, grouped_scene_dirs in discovered_groups:
+            for scene_dir in grouped_scene_dirs:
+                target_scene_id = scene_dir.name
+                if len(discovered_groups) > 1 or scene_name_counts[scene_dir.name] > 1:
+                    target_scene_id = _sanitize_subset_name(
+                        f"{source_subset_name}__{scene_dir.name}"
+                    )
+                scene_dirs.append((scene_dir, target_scene_id))
+        import_groups = [(_sanitize_subset_name(subset), scene_dirs)]
     resolved_destination = (destination_root or spec.destination_root).resolve()
     extracted_root = _extracted_dir(spec, resolved_destination)
     manifests_root = _manifests_dir(spec, resolved_destination)
-    subset_name = (
-        _sanitize_subset_name(subset)
-        if subset
-        else _default_scenesmith_import_subset(resolved_source)
-    )
-    subset_root = extracted_root / subset_name
-    subset_root.mkdir(parents=True, exist_ok=True)
     manifests_root.mkdir(parents=True, exist_ok=True)
 
     imported: list[dict[str, object]] = []
-    skipped: list[dict[str, object]] = []
+    skipped: list[dict[str, object]] = list(discovery_skipped)
 
-    for scene_dir in scene_dirs:
-        target_dir = subset_root / scene_dir.name
-        if target_dir.exists() or target_dir.is_symlink():
-            if not force:
+    for subset_name, scene_entries in import_groups:
+        subset_root = extracted_root / subset_name
+        subset_root.mkdir(parents=True, exist_ok=True)
+        for scene_dir, target_scene_id in scene_entries:
+            target_dir = subset_root / target_scene_id
+            if target_dir.exists() or target_dir.is_symlink():
+                if not force:
+                    skipped.append(
+                        {
+                            "scene_id": target_scene_id,
+                            "source_scene_id": scene_dir.name,
+                            "subset": subset_name,
+                            "source_dir": str(scene_dir),
+                            "target_dir": str(target_dir),
+                            "reason": "target_exists",
+                        }
+                    )
+                    continue
+                _remove_existing_path(target_dir)
+
+            try:
+                if mode == "link":
+                    target_dir.symlink_to(scene_dir, target_is_directory=True)
+                else:
+                    shutil.copytree(scene_dir, target_dir)
+            except OSError as error:
                 skipped.append(
                     {
-                        "scene_id": scene_dir.name,
+                        "scene_id": target_scene_id,
+                        "source_scene_id": scene_dir.name,
+                        "subset": subset_name,
                         "source_dir": str(scene_dir),
                         "target_dir": str(target_dir),
-                        "reason": "target_exists",
+                        "reason": "import_failed",
+                        "error": str(error),
                     }
                 )
                 continue
-            _remove_existing_path(target_dir)
 
-        if mode == "link":
-            target_dir.symlink_to(scene_dir, target_is_directory=True)
-        else:
-            shutil.copytree(scene_dir, target_dir)
+            imported.append(
+                {
+                    "scene_id": target_scene_id,
+                    "source_scene_id": scene_dir.name,
+                    "subset": subset_name,
+                    "source_dir": str(scene_dir),
+                    "target_dir": str(target_dir),
+                    "mode": mode,
+                }
+            )
 
-        imported.append(
-            {
-                "scene_id": scene_dir.name,
-                "source_dir": str(scene_dir),
-                "target_dir": str(target_dir),
-                "mode": mode,
-            }
-        )
+    subset_names = [subset_name for subset_name, _ in import_groups]
 
     payload: dict[str, object] = {
         "generated_at_utc": _now_utc(),
@@ -922,7 +1034,8 @@ def import_local_scenesmith_output(
         "kind": "local_import",
         "source_root": str(resolved_source),
         "destination_root": str(resolved_destination),
-        "subset": subset_name,
+        "subsets": subset_names,
+        "subset": subset_names[0] if len(subset_names) == 1 else None,
         "mode": mode,
         "force": force,
         "build_preview": build_preview,
@@ -932,9 +1045,14 @@ def import_local_scenesmith_output(
         "skipped_scenes": skipped,
     }
 
-    manifest_path = manifests_root / f"local_import_{subset_name}.json"
-    write_json(manifest_path, payload)
+    manifest_name = (
+        f"local_import_{subset_names[0]}.json"
+        if len(subset_names) == 1
+        else f"local_import_batch_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.json"
+    )
+    manifest_path = manifests_root / manifest_name
     payload["manifest_path"] = str(manifest_path)
+    write_json(manifest_path, payload)
 
     if build_preview:
         preprocess_index = preprocess_scenesmith_dataset()
@@ -948,6 +1066,7 @@ def import_local_scenesmith_output(
             "datasets_in_catalog": len(dataset_catalog["datasets"]),
             "renderable_datasets_in_catalog": len(renderable_catalog["datasets"]),
         }
+        write_json(manifest_path, payload)
 
     return payload
 
@@ -970,7 +1089,7 @@ def main() -> None:
         type=Path,
         help=(
             "A SceneSmith scene directory, or an experiment output directory containing "
-            "`scene_*` subdirectories."
+            "`scene_*` subdirectories. Passing an outputs root imports all valid nested results."
         ),
     )
     import_scenesmith_parser.add_argument(
@@ -996,7 +1115,8 @@ def main() -> None:
     )
     import_scenesmith_parser.add_argument(
         "--force",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help="Replace existing imported scene directories with the same target path.",
     )
     import_scenesmith_parser.add_argument(
