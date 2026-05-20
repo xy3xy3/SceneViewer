@@ -380,6 +380,36 @@ def _normalize_scenesmith_room(
     return room_manifest, normalized_objects
 
 
+def _scenesmith_scene_description(
+    layout: dict[str, object],
+    house_state: dict[str, object],
+    subset: str,
+    scene_id: str,
+) -> str:
+    house_prompt = layout.get("house_prompt")
+    if isinstance(house_prompt, str) and house_prompt.strip():
+        return house_prompt.strip()
+
+    rooms = layout.get("rooms")
+    if isinstance(rooms, list):
+        for room in rooms:
+            if not isinstance(room, dict):
+                continue
+            room_prompt = room.get("prompt")
+            if isinstance(room_prompt, str) and room_prompt.strip():
+                return room_prompt.strip()
+
+    layout_description = layout.get("description")
+    if isinstance(layout_description, str) and layout_description.strip():
+        return layout_description.strip()
+
+    state_description = house_state.get("description")
+    if isinstance(state_description, str) and state_description.strip():
+        return state_description.strip()
+
+    return f"{subset} {scene_id}"
+
+
 def preprocess_scenesmith_dataset(scene_limit: int | None = None) -> dict[str, object]:
     source_root = DATASETS["scenesmith"].destination_root / "source" / "extracted"
     output_root = PREPROCESSED_ROOT / "scenesmith"
@@ -451,10 +481,11 @@ def preprocess_scenesmith_dataset(scene_limit: int | None = None) -> dict[str, o
 
                 layout = house_state.get("layout", {})
                 placed_rooms = layout.get("placed_rooms", [])
-                description = (
-                    layout.get("description")
-                    or house_state.get("description")
-                    or f"{subset} {scene_id}"
+                description = _scenesmith_scene_description(
+                    layout,
+                    house_state,
+                    subset,
+                    scene_id,
                 )
 
                 manifest = _scene_manifest_base(
@@ -545,4 +576,3 @@ def preprocess_scenesmith_dataset(scene_limit: int | None = None) -> dict[str, o
     }
     _write_json(output_root / "index.json", index)
     return index
-
