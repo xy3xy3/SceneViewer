@@ -248,6 +248,7 @@ def import_local_scenesmith_output(
         "subset": subset_names[0] if len(subset_names) == 1 else None,
         "mode": mode,
         "force": force,
+        "skip_existing": not force,
         "build_preview": build_preview,
         "imported_scene_count": len(imported),
         "skipped_scene_count": len(skipped),
@@ -279,4 +280,3 @@ def import_local_scenesmith_output(
         write_json(manifest_path, payload)
 
     return payload
-

@@ -353,6 +353,9 @@ uv run dataset-downloader import-scenesmith-local /path/to/output --force
 
 # 保留已存在的导入目标，重复项自动跳过
 uv run dataset-downloader import-scenesmith-local /path/to/output --no-force
+
+# 保留已存在的导入目标；更直白的别名，适合批量导入 outputs 根目录
+uv run dataset-downloader import-scenesmith-local /home/xy3/ht/scenesmith/outputs --skip-existing
 ```
 
 说明：

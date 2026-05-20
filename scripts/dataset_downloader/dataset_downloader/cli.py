@@ -248,6 +248,14 @@ def main() -> None:
         help="Replace existing imported scene directories with the same target path.",
     )
     import_scenesmith_parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help=(
+            "Skip scenes whose target directories already exist. "
+            "When omitted, existing targets are replaced from the source outputs."
+        ),
+    )
+    import_scenesmith_parser.add_argument(
         "--build-preview",
         action="store_true",
         help="Also refresh SceneSmith preprocessed and renderable assets after import.",
@@ -255,12 +263,13 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.command == "import-scenesmith-local":
+        replace_existing = args.force and not args.skip_existing
         payload = import_local_scenesmith_output(
             source=args.source,
             subset=args.subset,
             destination_root=args.destination,
             mode=args.mode,
-            force=args.force,
+            force=replace_existing,
             build_preview=args.build_preview,
         )
         print(json.dumps(payload, indent=2))
