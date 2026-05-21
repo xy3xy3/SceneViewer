@@ -6,7 +6,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .config import DATASETS
+from .config import DATASETS, PREPROCESSED_ROOT, RENDERABLE_ROOT
 from .download import _extracted_dir, _manifests_dir, _now_utc, write_json
 from .preprocess import preprocess_scenesmith_dataset, write_dataset_catalog
 from .renderable import build_scenesmith_renderables, write_renderable_catalog
@@ -140,6 +140,21 @@ def _remove_existing_path(path: Path) -> None:
         shutil.rmtree(path)
 
 
+def _scenesmith_preview_rebuild_reason(*, requested: bool) -> str | None:
+    if requested:
+        return "requested"
+
+    preprocessed_index = PREPROCESSED_ROOT / "scenesmith" / "index.json"
+    if not preprocessed_index.exists():
+        return "missing_preprocessed_index"
+
+    renderable_index = RENDERABLE_ROOT / "scenesmith" / "index.json"
+    if not renderable_index.exists():
+        return "missing_renderable_index"
+
+    return None
+
+
 def import_local_scenesmith_output(
     *,
     source: Path,
@@ -265,7 +280,10 @@ def import_local_scenesmith_output(
     payload["manifest_path"] = str(manifest_path)
     write_json(manifest_path, payload)
 
-    if build_preview:
+    preview_rebuild_reason = _scenesmith_preview_rebuild_reason(requested=build_preview)
+    payload["preview_built"] = preview_rebuild_reason is not None
+    if preview_rebuild_reason is not None:
+        payload["preview_build_reason"] = preview_rebuild_reason
         preprocess_index = preprocess_scenesmith_dataset()
         dataset_catalog = write_dataset_catalog()
         renderable_index = build_scenesmith_renderables()

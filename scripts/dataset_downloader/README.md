@@ -335,6 +335,7 @@ uv run dataset-downloader import-scenesmith-local \
 - 找到该目录下的 `scene_*` 子目录，直接接收单个 `scene_*` 目录，或递归发现 `outputs` 根目录下所有有效结果。
 - 把它们接到 `assets/scenesmith/source/extracted/<subset>/` 下；批量导入时 subset 会按实验目录自动推断，例如 `local-2026-05-18-12-41-05`。
 - 如果带了 `--build-preview`，会自动执行 `preprocess scenesmith` 和 `renderable scenesmith`。
+- 如果 `assets/preprocessed/scenesmith/index.json` 或 `assets/renderable/scenesmith/index.json` 缺失，导入后也会自动补建一次预览资产，方便从误删目录中恢复。
 
 常用参数：
 

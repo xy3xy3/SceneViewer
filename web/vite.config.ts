@@ -59,6 +59,10 @@ export default defineConfig({
   plugins: [react(), repoAssetsPlugin()],
   server: {
     port: 5174,
+    watch: {
+      usePolling: true,
+      interval: 300,
+    },
     fs: {
       allow: [REPO_ROOT],
     },
