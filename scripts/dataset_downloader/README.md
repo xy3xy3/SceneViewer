@@ -14,6 +14,7 @@
 - `hsm` 对应 `3dlg-hcvc/hsm`
 - `sage` 对应 `nvidia/SAGE-10k`
 - `scenesmith` 对应 `nepfaff/scenesmith-example-scenes`
+- `sceneweaver` 对应本地 `SceneWeaver` 输出目录
 - `3dfront` 对应手动下载的 `3D-FRONT / 3D-FUTURE / 3D-FRONT-texture`
 
 其中 `SceneSmith` 默认只处理 `Room` 和 `House` 两个子集，避免默认拉取 `NotGenerated` 这类需要额外留意上游许可的数据。
@@ -46,8 +47,13 @@ assets/
 │   └── source/
 │       ├── archives/
 │       └── extracted/
+├── sceneweaver/
+│   ├── manifests/
+│   └── source/
+│       └── extracted/
 └── preprocessed/
     ├── sage/
+    ├── sceneweaver/
     ├── scenesmith/
     └── datasets.json
 ```

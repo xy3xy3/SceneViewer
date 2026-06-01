@@ -55,6 +55,18 @@ DATASETS: dict[str, DatasetSpec] = {
             "CC BY-NC 4.0 and is best kept opt-in."
         ),
     ),
+    "sceneweaver": DatasetSpec(
+        key="sceneweaver",
+        repo_id="local/SceneWeaver",
+        archive_suffix="",
+        archive_prefix=None,
+        destination_root=ASSETS_ROOT / "sceneweaver",
+        license_note=(
+            "SceneWeaver uses local experiment outputs. Import them with "
+            "`dataset-downloader import-sceneweaver-local` before preprocessing."
+        ),
+        supports_remote_download=False,
+    ),
     "3dfront": DatasetSpec(
         key="3dfront",
         repo_id="manual/3D-FRONT",

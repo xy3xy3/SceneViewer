@@ -47,7 +47,7 @@ export interface SceneSummary {
 export interface RenderableDatasetIndex {
   schema_version: number;
   generated_at_utc: string;
-  dataset: "hsm" | "sage" | "scenesmith" | "3dfront";
+  dataset: "hsm" | "sage" | "scenesmith" | "sceneweaver" | "3dfront";
   scene_count: number;
   shared_asset_count?: number;
   scenes: RenderableSceneSummary[];
@@ -66,7 +66,7 @@ export interface RenderableSceneSummary {
 export interface SceneManifest {
   schema_version: number;
   generated_at_utc: string;
-  dataset: "hsm" | "sage" | "scenesmith" | "3dfront";
+  dataset: "hsm" | "sage" | "scenesmith" | "sceneweaver" | "3dfront";
   scene_id: string;
   scene_uid: string;
   subset?: string | null;
@@ -246,6 +246,15 @@ export interface RenderableSceneSmithObject extends RenderableSceneSmithAsset {
   description?: string | null;
 }
 
+export interface RenderableSceneWeaverObject {
+  id: string;
+  position: [number, number, number];
+  size: [number, number, number];
+  rotation_y_deg: number;
+  object_type?: string | null;
+  description?: string | null;
+}
+
 export interface Renderable3dFrontRoomShell extends Renderable3dFrontAsset {
   category: "floor" | "wall" | "window" | "door" | "ceiling" | "trim" | "feature";
 }
@@ -310,6 +319,23 @@ export interface RenderableSceneSmithSceneManifest {
   objects: RenderableSceneSmithObject[];
 }
 
+export interface RenderableSceneWeaverSceneManifest {
+  schema_version: number;
+  generated_at_utc: string;
+  dataset: "sceneweaver";
+  scene_id: string;
+  scene_uid: string;
+  subset?: string | null;
+  source_scene_manifest: string;
+  scene_glb: string;
+  room?: {
+    id?: string | null;
+    room_type?: string | null;
+    dimensions?: { width?: number | null; length?: number | null; height?: number | null } | null;
+  } | null;
+  objects: RenderableSceneWeaverObject[];
+}
+
 export interface Renderable3dFrontSceneManifest {
   schema_version: number;
   generated_at_utc: string;
@@ -328,4 +354,5 @@ export type RenderableSceneManifest =
   | RenderableHsmSceneManifest
   | RenderableSageSceneManifest
   | RenderableSceneSmithSceneManifest
+  | RenderableSceneWeaverSceneManifest
   | Renderable3dFrontSceneManifest;

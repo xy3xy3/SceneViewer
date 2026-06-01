@@ -69,7 +69,7 @@ export type SceneBounds = {
   size: Vector3Tuple;
 };
 
-export type MaterialProfile = "sage" | "scenesmith" | "3dfront" | "hsm";
+export type MaterialProfile = "sage" | "scenesmith" | "sceneweaver" | "3dfront" | "hsm";
 
 export type ObjectLabelPlacement = {
   id: string;
@@ -240,14 +240,21 @@ function prepareScene(
             material.map.colorSpace = THREE.SRGBColorSpace;
             material.map.needsUpdate = true;
           }
+          if (material.emissiveMap) {
+            material.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+            material.emissiveMap.needsUpdate = true;
+          }
           if (profile === "sage") {
             material.metalness = 0;
             material.roughness = 1;
+          } else if (profile === "sceneweaver") {
+            material.metalness = material.metalness ?? 0;
+            material.roughness = material.roughness ?? 1;
           } else {
             material.metalness = Math.min(material.metalness ?? 0, 0.08);
             material.roughness = Math.max(material.roughness ?? 0.92, 0.78);
           }
-          material.envMapIntensity = 0.9;
+          material.envMapIntensity = profile === "sceneweaver" ? 0.72 : 0.9;
         }
         material.side = doubleSided || isTransparent ? THREE.DoubleSide : THREE.FrontSide;
         material.transparent = isTransparent;

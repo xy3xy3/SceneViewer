@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import shutil
 import zipfile
 from datetime import UTC, datetime
@@ -95,6 +96,10 @@ def _sage_scene_output_dir(scene_id: str) -> Path:
 
 def _scenesmith_scene_output_dir(subset: str, scene_id: str) -> Path:
     return PREPROCESSED_ROOT / "scenesmith" / subset / scene_id
+
+
+def _sceneweaver_scene_output_dir(subset: str, scene_id: str) -> Path:
+    return PREPROCESSED_ROOT / "sceneweaver" / subset / scene_id
 
 
 def _front3d_scene_output_dir(house_id: str, room_id: str) -> Path:

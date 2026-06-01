@@ -110,6 +110,10 @@ def _scenesmith_renderable_scene_output(subset: str, scene_id: str) -> Path:
     return RENDERABLE_ROOT / "scenesmith" / subset / scene_id
 
 
+def _sceneweaver_renderable_scene_output(subset: str, scene_id: str) -> Path:
+    return RENDERABLE_ROOT / "sceneweaver" / subset / scene_id
+
+
 def _front3d_renderable_scene_output(house_id: str, scene_id: str) -> Path:
     return RENDERABLE_ROOT / FRONT3D_DATASET_KEY / safe_front3d_name(house_id) / safe_front3d_name(scene_id)
 

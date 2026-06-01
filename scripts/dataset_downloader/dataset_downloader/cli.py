@@ -24,11 +24,13 @@ from .download import (
     _selected_subsets,
 )
 from .hsm import HSM_DATASET_KEY, HSM_HSSD_ROOT, hsm_generated_scenes_root
+from .local_sceneweaver import import_local_sceneweaver_output
 from .local_scenesmith import import_local_scenesmith_output
 from .preprocess import (
     preprocess_3dfront_dataset,
     preprocess_hsm_dataset,
     preprocess_sage_dataset,
+    preprocess_sceneweaver_dataset,
     preprocess_scenesmith_dataset,
     write_dataset_catalog,
 )
@@ -36,6 +38,7 @@ from .renderable import (
     build_3dfront_renderables,
     build_hsm_renderables,
     build_sage_renderables,
+    build_sceneweaver_renderables,
     build_scenesmith_renderables,
     write_renderable_catalog,
 )
@@ -260,11 +263,75 @@ def main() -> None:
         action="store_true",
         help="Also refresh SceneSmith preprocessed and renderable assets after import.",
     )
+    import_sceneweaver_parser = subparsers.add_parser(
+        "import-sceneweaver-local",
+        help="Import a local SceneWeaver output directory into assets/sceneweaver/source/extracted/.",
+    )
+    import_sceneweaver_parser.add_argument(
+        "source",
+        type=Path,
+        help=(
+            "A SceneWeaver run directory, or a root containing multiple run outputs. "
+            "Passing a parent outputs directory imports all valid nested results."
+        ),
+    )
+    import_sceneweaver_parser.add_argument(
+        "--subset",
+        type=str,
+        default=None,
+        help=(
+            "Subset name to create under assets/sceneweaver/source/extracted/. "
+            "Defaults to a subset inferred from the source path."
+        ),
+    )
+    import_sceneweaver_parser.add_argument(
+        "--destination",
+        type=Path,
+        default=DATASETS["sceneweaver"].destination_root,
+        help="Target SceneWeaver dataset root. Defaults to assets/sceneweaver.",
+    )
+    import_sceneweaver_parser.add_argument(
+        "--mode",
+        choices=["link", "copy"],
+        default="link",
+        help="Whether to symlink the local run directories or copy them into the repo.",
+    )
+    import_sceneweaver_parser.add_argument(
+        "--force",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Replace existing imported run directories with the same target path.",
+    )
+    import_sceneweaver_parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help=(
+            "Skip scenes whose target directories already exist. "
+            "When omitted, existing targets are replaced from the source outputs."
+        ),
+    )
+    import_sceneweaver_parser.add_argument(
+        "--build-preview",
+        action="store_true",
+        help="Also refresh SceneWeaver preprocessed and renderable assets after import.",
+    )
 
     args = parser.parse_args()
     if args.command == "import-scenesmith-local":
         replace_existing = args.force and not args.skip_existing
         payload = import_local_scenesmith_output(
+            source=args.source,
+            subset=args.subset,
+            destination_root=args.destination,
+            mode=args.mode,
+            force=replace_existing,
+            build_preview=args.build_preview,
+        )
+        print(json.dumps(payload, indent=2))
+        return
+    if args.command == "import-sceneweaver-local":
+        replace_existing = args.force and not args.skip_existing
+        payload = import_local_sceneweaver_output(
             source=args.source,
             subset=args.subset,
             destination_root=args.destination,
@@ -320,6 +387,8 @@ def main() -> None:
                 preprocess_hsm_dataset(scene_limit=args.limit)
             elif target == "sage":
                 preprocess_sage_dataset(scene_limit=args.limit)
+            elif target == "sceneweaver":
+                preprocess_sceneweaver_dataset(scene_limit=args.limit)
             elif target == "scenesmith":
                 preprocess_scenesmith_dataset(scene_limit=args.limit)
         catalog = write_dataset_catalog()
@@ -335,6 +404,8 @@ def main() -> None:
                 build_hsm_renderables(scene_limit=args.limit)
             elif target == "sage":
                 build_sage_renderables(scene_limit=args.limit)
+            elif target == "sceneweaver":
+                build_sceneweaver_renderables(scene_limit=args.limit)
             elif target == "scenesmith":
                 build_scenesmith_renderables(scene_limit=args.limit)
         catalog = write_renderable_catalog()

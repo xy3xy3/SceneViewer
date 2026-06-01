@@ -5,11 +5,13 @@ import * as THREE from "three";
 import type {
   Renderable3dFrontSceneManifest,
   RenderableSceneManifest,
+  RenderableSceneWeaverSceneManifest,
   RenderableSceneSmithSceneManifest,
   SceneManifest,
 } from "../types";
 import { Front3DPreviewContent } from "./scenePreview/front3dContent";
 import { RoomLayoutPreviewContent } from "./scenePreview/roomLayoutContent";
+import { SceneWeaverPreviewContent } from "./scenePreview/sceneweaverContent";
 import { SceneSmithPreviewContent } from "./scenePreview/scenesmithContent";
 import {
   LoadingProgressReporter,
@@ -220,6 +222,13 @@ function PreviewContent({
           showObjectLabels={showObjectLabels}
           onRenderProgressChange={onRenderProgressChange}
         />
+      ) : renderScene.dataset === "sceneweaver" ? (
+        <SceneWeaverPreviewContent
+          key={renderScene.scene_uid}
+          renderScene={renderScene as RenderableSceneWeaverSceneManifest}
+          showObjectLabels={showObjectLabels}
+          onRenderProgressChange={onRenderProgressChange}
+        />
       ) : (
         <SceneSmithPreviewContent
           key={renderScene.scene_uid}
@@ -267,7 +276,9 @@ function ScenePreviewViewport({
         ? `HSM: ${renderScene.rooms.length} procedural rooms + ${renderScene.objects.length} HSSD objects`
         : dataset === "3dfront"
           ? `3D-FRONT: ${renderScene.room_shells.length} room shells + ${renderScene.objects.length} objects`
-          : `SceneSmith: ${renderScene.room_shells.length} room shells + ${renderScene.objects.length} objects`;
+          : dataset === "sceneweaver"
+            ? `SceneWeaver: 1 exported GLB + ${renderScene.objects.length} layout objects`
+            : `SceneSmith: ${renderScene.room_shells.length} room shells + ${renderScene.objects.length} objects`;
   const progressSnapshot = useMemo(
     () => createProgressSnapshot(renderScene.scene_uid, resourceProgress, renderProgress),
     [renderProgress, renderScene.scene_uid, resourceProgress],
