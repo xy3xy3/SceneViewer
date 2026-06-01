@@ -328,6 +328,13 @@ uv run dataset-downloader import-scenesmith-local \
   --build-preview
 ```
 
+如果你本机别的地方已经下载好了原始 `SceneSmith` 场景包，也可以直接传单个 tar/zip 文件，哪怕文件名里保留了浏览器下载参数：
+
+```bash
+uv run dataset-downloader import-scenesmith-local \
+  '/home/xy/proj/SceneBenchmark/local/scenesmith-example-data/scene_000.tar?download=true'
+```
+
 如果要把 `outputs` 下面所有本地实验一次性导入，可以直接传根目录：
 
 ```bash
@@ -339,6 +346,7 @@ uv run dataset-downloader import-scenesmith-local \
 这个命令会做三件事：
 
 - 找到该目录下的 `scene_*` 子目录，直接接收单个 `scene_*` 目录，或递归发现 `outputs` 根目录下所有有效结果。
+- 如果传入的是本地 tar/zip 场景包，会自动安全解压并校验是否包含 `package.xml` 和 `combined_house/`。
 - 把它们接到 `assets/scenesmith/source/extracted/<subset>/` 下；批量导入时 subset 会按实验目录自动推断，例如 `local-2026-05-18-12-41-05`。
 - 如果带了 `--build-preview`，会自动执行 `preprocess scenesmith` 和 `renderable scenesmith`。
 - 如果 `assets/preprocessed/scenesmith/index.json` 或 `assets/renderable/scenesmith/index.json` 缺失，导入后也会自动补建一次预览资产，方便从误删目录中恢复。
@@ -368,6 +376,7 @@ uv run dataset-downloader import-scenesmith-local /home/xy3/ht/scenesmith/output
 说明：
 
 - 默认 `--mode link`，适合本机联调，速度快且不重复占磁盘。
+- 传入 tar/zip 时会自动解压导入；`--mode` 只对目录输入生效。
 - 无效或不完整的 `scene_*` 目录会记录为 skipped，不会中断其它结果导入。
 - 默认 subset 会从路径自动推断，例如 `outputs/2026-05-18/12-41-05` 会生成类似 `local-2026-05-18-12-41-05` 的分组。
 - 导入记录会写到 `assets/scenesmith/manifests/local_import_<subset>.json`，方便回看来源。

@@ -219,8 +219,9 @@ def main() -> None:
         "source",
         type=Path,
         help=(
-            "A SceneSmith scene directory, or an experiment output directory containing "
-            "`scene_*` subdirectories. Passing an outputs root imports all valid nested results."
+            "A SceneSmith scene directory, a local SceneSmith tar/zip scene archive, "
+            "or an experiment output directory containing `scene_*` subdirectories. "
+            "Passing an outputs root imports all valid nested results."
         ),
     )
     import_scenesmith_parser.add_argument(
@@ -242,7 +243,10 @@ def main() -> None:
         "--mode",
         choices=["link", "copy"],
         default="link",
-        help="Whether to symlink the local scene directories or copy them into the repo.",
+        help=(
+            "Whether to symlink local scene directories or copy them into the repo. "
+            "Archive inputs are always extracted."
+        ),
     )
     import_scenesmith_parser.add_argument(
         "--force",
