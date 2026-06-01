@@ -7,3 +7,5 @@ refrepo/*
 # This includes raw dataset downloads and all preprocessed preview manifests.
 assets/*
 !assets/.gitkeep
+
+local/
