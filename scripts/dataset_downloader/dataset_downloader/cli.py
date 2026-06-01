@@ -24,10 +24,12 @@ from .download import (
     _selected_subsets,
 )
 from .hsm import HSM_DATASET_KEY, HSM_HSSD_ROOT, hsm_generated_scenes_root
+from .local_hssd import import_local_hssd_output
 from .local_sceneweaver import import_local_sceneweaver_output
 from .local_scenesmith import import_local_scenesmith_output
 from .preprocess import (
     preprocess_3dfront_dataset,
+    preprocess_hssd_dataset,
     preprocess_hsm_dataset,
     preprocess_sage_dataset,
     preprocess_sceneweaver_dataset,
@@ -36,6 +38,7 @@ from .preprocess import (
 )
 from .renderable import (
     build_3dfront_renderables,
+    build_hssd_renderables,
     build_hsm_renderables,
     build_sage_renderables,
     build_sceneweaver_renderables,
@@ -319,6 +322,62 @@ def main() -> None:
         action="store_true",
         help="Also refresh SceneWeaver preprocessed and renderable assets after import.",
     )
+    import_hssd_parser = subparsers.add_parser(
+        "import-hssd-local",
+        help="Import a local HSSD stage dataset into assets/hssd/source/extracted/.",
+    )
+    import_hssd_parser.add_argument(
+        "source",
+        type=Path,
+        help="A local HSSD root containing `stages/` and optional `objects/` and `support-surfaces/`.",
+    )
+    import_hssd_parser.add_argument(
+        "--destination",
+        type=Path,
+        default=DATASETS["hssd"].destination_root,
+        help="Target HSSD dataset root. Defaults to assets/hssd.",
+    )
+    import_hssd_parser.add_argument(
+        "--mode",
+        choices=["link", "copy"],
+        default="link",
+        help="Whether to symlink local HSSD directories or copy them into the repo.",
+    )
+    import_hssd_parser.add_argument(
+        "--force",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Replace existing imported HSSD directories with the same target path.",
+    )
+    import_hssd_parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help=(
+            "Skip target directories that already exist. "
+            "When omitted, existing targets are replaced from the source root."
+        ),
+    )
+    import_hssd_parser.add_argument(
+        "--build-preview",
+        action="store_true",
+        help="Also refresh HSSD preprocessed and renderable assets after import.",
+    )
+    import_hssd_parser.add_argument(
+        "--skip-habitat-metadata",
+        action="store_true",
+        help="Skip downloading official hssd-hab scene/object placement metadata.",
+    )
+    import_hssd_parser.add_argument(
+        "--force-habitat-metadata-download",
+        action="store_true",
+        help="Force re-download of official hssd-hab metadata JSON files.",
+    )
+    import_hssd_parser.add_argument(
+        "--metadata-max-workers",
+        type=int,
+        default=8,
+        help="Maximum concurrent workers when downloading hssd-hab metadata.",
+    )
 
     args = parser.parse_args()
     if args.command == "import-scenesmith-local":
@@ -342,6 +401,20 @@ def main() -> None:
             mode=args.mode,
             force=replace_existing,
             build_preview=args.build_preview,
+        )
+        print(json.dumps(payload, indent=2))
+        return
+    if args.command == "import-hssd-local":
+        replace_existing = args.force and not args.skip_existing
+        payload = import_local_hssd_output(
+            source=args.source,
+            destination_root=args.destination,
+            mode=args.mode,
+            force=replace_existing,
+            build_preview=args.build_preview,
+            sync_habitat_metadata=not args.skip_habitat_metadata,
+            metadata_force_download=args.force_habitat_metadata_download,
+            metadata_max_workers=args.metadata_max_workers,
         )
         print(json.dumps(payload, indent=2))
         return
@@ -387,6 +460,8 @@ def main() -> None:
         for target in targets:
             if target == "3dfront":
                 preprocess_3dfront_dataset(scene_limit=args.limit)
+            elif target == "hssd":
+                preprocess_hssd_dataset(scene_limit=args.limit)
             elif target == HSM_DATASET_KEY:
                 preprocess_hsm_dataset(scene_limit=args.limit)
             elif target == "sage":
@@ -404,6 +479,8 @@ def main() -> None:
         for target in targets:
             if target == "3dfront":
                 build_3dfront_renderables(scene_limit=args.limit)
+            elif target == "hssd":
+                build_hssd_renderables(scene_limit=args.limit)
             elif target == HSM_DATASET_KEY:
                 build_hsm_renderables(scene_limit=args.limit)
             elif target == "sage":

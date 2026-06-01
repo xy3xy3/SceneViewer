@@ -46,6 +46,9 @@ function formatDatasetLabel(dataset: string): string {
   if (dataset === "sceneweaver") {
     return "SceneWeaver";
   }
+  if (dataset === "hssd") {
+    return "HSSD";
+  }
   return "3D-FRONT";
 }
 
@@ -110,6 +113,11 @@ function roomSubtitle(room: NormalizedRoom, dataset: SceneManifest["dataset"]): 
     const length = room.dimensions?.length;
     const objectCount = room.object_count ?? room.object_ids?.length ?? 0;
     return `${room.room_type || "room"} · ${width?.toFixed?.(2) ?? "?"}m x ${length?.toFixed?.(2) ?? "?"}m · ${objectCount} objects`;
+  }
+
+  if (dataset === "hssd") {
+    const objectCount = room.object_count ?? room.object_ids?.length ?? 0;
+    return `${room.room_type || "stage"} · ${objectCount} objects · stage GLB preview`;
   }
 
   const objectCount = room.object_count ?? room.objects?.length ?? 0;
@@ -437,7 +445,7 @@ export default function App() {
           </div>
           <div>
             <h1>SceneViewer</h1>
-            <p>Preview HSM, SAGE, SceneSmith, SceneWeaver, and 3D-FRONT scenes with repo-local renderable assets.</p>
+            <p>Preview HSM, SAGE, SceneSmith, SceneWeaver, HSSD, and 3D-FRONT scenes with repo-local renderable assets.</p>
           </div>
         </div>
 

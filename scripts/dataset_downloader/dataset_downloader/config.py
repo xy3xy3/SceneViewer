@@ -24,6 +24,18 @@ class DatasetSpec:
 
 
 DATASETS: dict[str, DatasetSpec] = {
+    "hssd": DatasetSpec(
+        key="hssd",
+        repo_id="local/HSSD",
+        archive_suffix="",
+        archive_prefix=None,
+        destination_root=ASSETS_ROOT / "hssd",
+        license_note=(
+            "HSSD stage GLBs are imported from a local checkout. Use "
+            "`dataset-downloader import-hssd-local` before preprocessing."
+        ),
+        supports_remote_download=False,
+    ),
     "hsm": DatasetSpec(
         key="hsm",
         repo_id="3dlg-hcvc/hsm",

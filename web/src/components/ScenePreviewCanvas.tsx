@@ -4,8 +4,8 @@ import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
 import type {
   Renderable3dFrontSceneManifest,
+  RenderableWholeSceneGlbSceneManifest,
   RenderableSceneManifest,
-  RenderableSceneWeaverSceneManifest,
   RenderableSceneSmithSceneManifest,
   SceneManifest,
 } from "../types";
@@ -222,10 +222,10 @@ function PreviewContent({
           showObjectLabels={showObjectLabels}
           onRenderProgressChange={onRenderProgressChange}
         />
-      ) : renderScene.dataset === "sceneweaver" ? (
+      ) : renderScene.dataset === "sceneweaver" || renderScene.dataset === "hssd" ? (
         <SceneWeaverPreviewContent
           key={renderScene.scene_uid}
-          renderScene={renderScene as RenderableSceneWeaverSceneManifest}
+          renderScene={renderScene as RenderableWholeSceneGlbSceneManifest}
           showObjectLabels={showObjectLabels}
           onRenderProgressChange={onRenderProgressChange}
         />
@@ -268,17 +268,27 @@ function ScenePreviewViewport({
     progress: 0,
   });
 
-  const dataset = renderScene.dataset;
-  const badge =
-    dataset === "sage"
-      ? `SAGE: ${renderScene.objects.length} textured objects`
-      : dataset === "hsm"
-        ? `HSM: ${renderScene.rooms.length} procedural rooms + ${renderScene.objects.length} HSSD objects`
-        : dataset === "3dfront"
-          ? `3D-FRONT: ${renderScene.room_shells.length} room shells + ${renderScene.objects.length} objects`
-          : dataset === "sceneweaver"
-            ? `SceneWeaver: 1 exported GLB + ${renderScene.objects.length} layout objects`
-            : `SceneSmith: ${renderScene.room_shells.length} room shells + ${renderScene.objects.length} objects`;
+  let badge = "";
+  switch (renderScene.dataset) {
+    case "sage":
+      badge = `SAGE: ${renderScene.objects.length} textured objects`;
+      break;
+    case "hsm":
+      badge = `HSM: ${renderScene.rooms.length} procedural rooms + ${renderScene.objects.length} HSSD objects`;
+      break;
+    case "3dfront":
+      badge = `3D-FRONT: ${renderScene.room_shells.length} room shells + ${renderScene.objects.length} objects`;
+      break;
+    case "sceneweaver":
+      badge = `SceneWeaver: 1 exported GLB + ${renderScene.objects.length} layout objects`;
+      break;
+    case "hssd":
+      badge = `HSSD: 1 stage GLB + ${renderScene.objects.length} annotated objects`;
+      break;
+    case "scenesmith":
+      badge = `SceneSmith: ${renderScene.room_shells.length} room shells + ${renderScene.objects.length} objects`;
+      break;
+  }
   const progressSnapshot = useMemo(
     () => createProgressSnapshot(renderScene.scene_uid, resourceProgress, renderProgress),
     [renderProgress, renderScene.scene_uid, resourceProgress],

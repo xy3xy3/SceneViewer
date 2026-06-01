@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { RenderableSceneWeaverSceneManifest } from "../../types";
+import type { RenderableWholeSceneGlbSceneManifest } from "../../types";
 import {
   BatchedAssetModels,
   Bounds,
@@ -18,6 +18,7 @@ import {
   expandBounds,
   finalizeBounds,
   labelText,
+  updateMeasuredBoundsMap,
 } from "./shared";
 
 function sceneBoundsEqual(left: SceneBounds | null, right: SceneBounds): boolean {
@@ -35,8 +36,9 @@ function sceneBoundsEqual(left: SceneBounds | null, right: SceneBounds): boolean
 }
 
 function computeSceneWeaverBounds(
-  renderScene: RenderableSceneWeaverSceneManifest,
+  renderScene: RenderableWholeSceneGlbSceneManifest,
   measuredSceneBounds: SceneBounds | null,
+  measuredObjectBounds: Record<string, SceneBounds>,
 ): SceneBounds {
   if (measuredSceneBounds) {
     return measuredSceneBounds;
@@ -55,10 +57,31 @@ function computeSceneWeaverBounds(
   const minMax = { min, max };
 
   for (const object of renderScene.objects) {
+    const measured = measuredObjectBounds[object.id];
+    if (measured) {
+      const half: Vector3Tuple = [
+        Math.max(measured.size[0] / 2, 0.1),
+        Math.max(measured.size[1] / 2, 0.1),
+        Math.max(measured.size[2] / 2, 0.1),
+      ];
+      expandBounds(minMax, [
+        measured.center[0] - half[0],
+        measured.center[1] - half[1],
+        measured.center[2] - half[2],
+      ]);
+      expandBounds(minMax, [
+        measured.center[0] + half[0],
+        measured.center[1] + half[1],
+        measured.center[2] + half[2],
+      ]);
+      continue;
+    }
+
+    const fallbackSize = object.size ?? [0.25, 0.25, 0.25];
     const half: Vector3Tuple = [
-      Math.max(object.size[0] / 2, 0.1),
-      Math.max(object.size[1] / 2, 0.1),
-      Math.max(object.size[2] / 2, 0.1),
+      Math.max(fallbackSize[0] / 2, 0.1),
+      Math.max(fallbackSize[1] / 2, 0.1),
+      Math.max(fallbackSize[2] / 2, 0.1),
     ];
     expandBounds(minMax, [
       object.position[0] - half[0],
@@ -85,12 +108,29 @@ function computeSceneWeaverBounds(
   return finalizeBounds(min, max);
 }
 
+function buildWholeSceneObjectAssets(
+  renderScene: RenderableWholeSceneGlbSceneManifest,
+): AssetPlacement[] {
+  return renderScene.objects
+    .filter((object) => Boolean(object.asset_path))
+    .map(
+      (object): AssetPlacement => ({
+        key: object.id,
+        assetPath: object.asset_path!,
+        position: object.position,
+        rotationYDeg: object.rotation_y_deg,
+        quaternion: object.quaternion,
+        scale: object.scale ?? [1, 1, 1],
+      }),
+    );
+}
+
 export function SceneWeaverPreviewContent({
   renderScene,
   showObjectLabels,
   onRenderProgressChange,
 }: {
-  renderScene: RenderableSceneWeaverSceneManifest;
+  renderScene: RenderableWholeSceneGlbSceneManifest;
   showObjectLabels: boolean;
   onRenderProgressChange: (snapshot: RenderProgressSnapshot) => void;
 }) {
@@ -98,7 +138,8 @@ export function SceneWeaverPreviewContent({
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [fitVersion, setFitVersion] = useState(0);
   const [measuredSceneBounds, setMeasuredSceneBounds] = useState<SceneBounds | null>(null);
-  const sceneAsset = useMemo(
+  const [measuredObjectBounds, setMeasuredObjectBounds] = useState<Record<string, SceneBounds>>({});
+  const sceneAssets = useMemo(
     (): AssetPlacement[] => [
       {
         key: `${renderScene.scene_uid}::scene-glb`,
@@ -110,42 +151,67 @@ export function SceneWeaverPreviewContent({
     ],
     [renderScene.scene_glb, renderScene.scene_uid],
   );
-  const [batchProgress, setBatchProgress] = useState(() =>
-    createEmptyBatchProgress(sceneAsset.length),
+  const objectAssets = useMemo(() => buildWholeSceneObjectAssets(renderScene), [renderScene]);
+  const [sceneBatchProgress, setSceneBatchProgress] = useState(() =>
+    createEmptyBatchProgress(sceneAssets.length),
+  );
+  const [objectBatchProgress, setObjectBatchProgress] = useState(() =>
+    createEmptyBatchProgress(objectAssets.length),
   );
   const inspectableObjects = useMemo(
     (): InspectableObject[] =>
       renderScene.objects.map((object) => ({
         id: object.id,
         label: labelText(object.object_type || object.description, object.id),
-        position: object.position,
-        size: object.size,
+        position: measuredObjectBounds[object.id]?.center ?? object.position,
+        size: measuredObjectBounds[object.id]?.size ?? object.size ?? [0.25, 0.25, 0.25],
       })),
-    [renderScene.objects],
+    [measuredObjectBounds, renderScene.objects],
   );
   const objectLabels = useMemo(
     () => buildObjectLabels(inspectableObjects, showObjectLabels, selectedObjectId, hoveredObjectId),
     [hoveredObjectId, inspectableObjects, selectedObjectId, showObjectLabels],
   );
   const sceneBounds = useMemo(
-    () => computeSceneWeaverBounds(renderScene, measuredSceneBounds),
-    [measuredSceneBounds, renderScene],
+    () => computeSceneWeaverBounds(renderScene, measuredSceneBounds, measuredObjectBounds),
+    [measuredObjectBounds, measuredSceneBounds, renderScene],
   );
 
   useEffect(() => {
-    const total = sceneAsset.length;
-    const completed = Math.min(batchProgress.readyCount, total);
-    const ready = total === 0 || batchProgress.complete;
+    const total = sceneAssets.length + objectAssets.length;
+    const sceneCompleted = Math.min(sceneBatchProgress.readyCount, sceneAssets.length);
+    const objectCompleted = Math.min(objectBatchProgress.readyCount, objectAssets.length);
+    const completed = sceneCompleted + objectCompleted;
+    const ready =
+      (sceneAssets.length === 0 || sceneBatchProgress.complete) &&
+      (objectAssets.length === 0 || objectBatchProgress.complete);
     const progress = total === 0 ? 100 : Math.round((completed / total) * 100);
+    const datasetLabel = renderScene.dataset === "hssd" ? "HSSD stage" : "SceneWeaver";
+    let detail = `Mounted ${datasetLabel} GLB`;
+    if (!ready) {
+      detail =
+        sceneCompleted < sceneAssets.length
+          ? `Mounted ${sceneCompleted}/${sceneAssets.length} scene assets`
+          : `Mounted ${objectCompleted}/${objectAssets.length} object assets`;
+    }
     onRenderProgressChange({
       ready,
       stage: ready ? "Scene ready" : "Preparing scene mesh",
-      detail: ready ? "Mounted exported SceneWeaver GLB" : `Mounted ${completed}/${total} scene assets`,
+      detail,
       completed,
       total,
       progress,
     });
-  }, [batchProgress.complete, batchProgress.readyCount, onRenderProgressChange, sceneAsset.length]);
+  }, [
+    objectAssets.length,
+    objectBatchProgress.complete,
+    objectBatchProgress.readyCount,
+    onRenderProgressChange,
+    renderScene.dataset,
+    sceneAssets.length,
+    sceneBatchProgress.complete,
+    sceneBatchProgress.readyCount,
+  ]);
 
   function handleObjectSelect(id: string, additive: boolean) {
     setSelectedObjectId((current) => {
@@ -172,17 +238,29 @@ export function SceneWeaverPreviewContent({
         </mesh>
         <BatchedAssetModels
           key={`${renderScene.scene_uid}::sceneweaver-scene`}
-          items={sceneAsset}
+          items={sceneAssets}
           batchSize={1}
           materialProfile="sceneweaver"
           onItemBounds={(_, bounds) =>
             setMeasuredSceneBounds((current) => (sceneBoundsEqual(current, bounds) ? current : bounds))
           }
-          onProgress={setBatchProgress}
+          onProgress={setSceneBatchProgress}
           onComplete={() => {
             setFitVersion((current) => current + 1);
           }}
         />
+        {objectAssets.length > 0 ? (
+          <BatchedAssetModels
+            key={`${renderScene.scene_uid}::whole-scene-objects`}
+            items={objectAssets}
+            batchSize={24}
+            materialProfile="sceneweaver"
+            onItemBounds={(id, bounds) =>
+              setMeasuredObjectBounds((current) => updateMeasuredBoundsMap(current, id, bounds))
+            }
+            onProgress={setObjectBatchProgress}
+          />
+        ) : null}
         <ObjectHitTargets
           items={inspectableObjects}
           activeId={selectedObjectId}

@@ -7,7 +7,6 @@ import {
   Lightformer,
   useBounds,
   useGLTF,
-  useProgress,
   useTexture,
 } from "@react-three/drei";
 import type { ThreeEvent } from "@react-three/fiber";
@@ -751,25 +750,105 @@ export function LoadingProgressReporter({
   sceneKey: string;
   onChange: (snapshot: ResourceProgressSnapshot) => void;
 }) {
-  const { active, item, loaded, total, progress } = useProgress();
+  const frameRef = useRef<number | null>(null);
+  const latestSnapshotRef = useRef<ResourceProgressSnapshot | null>(null);
 
   useEffect(() => {
-    const frameId = window.requestAnimationFrame(() => {
-      startTransition(() => {
-        onChange({
-          active,
-          item,
-          loaded,
-          total,
-          progress,
+    const manager = THREE.DefaultLoadingManager;
+    const previousOnStart = manager.onStart;
+    const previousOnProgress = manager.onProgress;
+    const previousOnLoad = manager.onLoad;
+    const previousOnError = manager.onError;
+
+    const schedule = (snapshot: ResourceProgressSnapshot) => {
+      const current = latestSnapshotRef.current;
+      if (
+        current &&
+        current.active === snapshot.active &&
+        current.item === snapshot.item &&
+        current.loaded === snapshot.loaded &&
+        current.total === snapshot.total &&
+        current.progress === snapshot.progress
+      ) {
+        return;
+      }
+
+      latestSnapshotRef.current = snapshot;
+      if (frameRef.current !== null) {
+        window.cancelAnimationFrame(frameRef.current);
+      }
+      frameRef.current = window.requestAnimationFrame(() => {
+        frameRef.current = null;
+        startTransition(() => {
+          onChange(snapshot);
         });
       });
+    };
+
+    const createSnapshot = (
+      active: boolean,
+      item: string,
+      loaded: number,
+      total: number,
+    ): ResourceProgressSnapshot => {
+      const safeLoaded = Math.max(loaded, 0);
+      const safeTotal = Math.max(total, safeLoaded);
+      return {
+        active,
+        item,
+        loaded: safeLoaded,
+        total: safeTotal,
+        progress: active && safeTotal > 0 ? (safeLoaded / safeTotal) * 100 : active ? 0 : 100,
+      };
+    };
+
+    schedule({
+      active: false,
+      item: "",
+      loaded: 0,
+      total: 0,
+      progress: 100,
     });
 
-    return () => {
-      window.cancelAnimationFrame(frameId);
+    manager.onStart = (url, loaded, total) => {
+      previousOnStart?.(url, loaded, total);
+      schedule(createSnapshot(true, url, loaded, total));
     };
-  }, [active, item, loaded, onChange, progress, sceneKey, total]);
+    manager.onProgress = (url, loaded, total) => {
+      previousOnProgress?.(url, loaded, total);
+      schedule(createSnapshot(true, url, loaded, total));
+    };
+    manager.onLoad = () => {
+      previousOnLoad?.();
+      const latest = latestSnapshotRef.current;
+      schedule(
+        createSnapshot(
+          false,
+          latest?.item ?? "",
+          latest?.total ?? latest?.loaded ?? 0,
+          latest?.total ?? latest?.loaded ?? 0,
+        ),
+      );
+    };
+    manager.onError = (url) => {
+      previousOnError?.(url);
+      const latest = latestSnapshotRef.current;
+      schedule(
+        createSnapshot(false, url, latest?.loaded ?? 0, latest?.total ?? latest?.loaded ?? 0),
+      );
+    };
+
+    return () => {
+      if (frameRef.current !== null) {
+        window.cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
+      manager.onStart = previousOnStart;
+      manager.onProgress = previousOnProgress;
+      manager.onLoad = previousOnLoad;
+      manager.onError = previousOnError;
+    };
+  }, [onChange, sceneKey]);
 
   return null;
 }

@@ -47,7 +47,7 @@ export interface SceneSummary {
 export interface RenderableDatasetIndex {
   schema_version: number;
   generated_at_utc: string;
-  dataset: "hsm" | "sage" | "scenesmith" | "sceneweaver" | "3dfront";
+  dataset: "hsm" | "sage" | "scenesmith" | "sceneweaver" | "hssd" | "3dfront";
   scene_count: number;
   shared_asset_count?: number;
   scenes: RenderableSceneSummary[];
@@ -66,7 +66,7 @@ export interface RenderableSceneSummary {
 export interface SceneManifest {
   schema_version: number;
   generated_at_utc: string;
-  dataset: "hsm" | "sage" | "scenesmith" | "sceneweaver" | "3dfront";
+  dataset: "hsm" | "sage" | "scenesmith" | "sceneweaver" | "hssd" | "3dfront";
   scene_id: string;
   scene_uid: string;
   subset?: string | null;
@@ -246,11 +246,15 @@ export interface RenderableSceneSmithObject extends RenderableSceneSmithAsset {
   description?: string | null;
 }
 
-export interface RenderableSceneWeaverObject {
+export interface RenderableWholeSceneObject {
   id: string;
   position: [number, number, number];
-  size: [number, number, number];
+  size?: [number, number, number];
   rotation_y_deg: number;
+  asset_path?: string | null;
+  quaternion?: [number, number, number, number] | null;
+  scale?: [number, number, number] | null;
+  source_id?: string | null;
   object_type?: string | null;
   description?: string | null;
 }
@@ -319,10 +323,10 @@ export interface RenderableSceneSmithSceneManifest {
   objects: RenderableSceneSmithObject[];
 }
 
-export interface RenderableSceneWeaverSceneManifest {
+export interface RenderableWholeSceneGlbSceneManifest {
   schema_version: number;
   generated_at_utc: string;
-  dataset: "sceneweaver";
+  dataset: "sceneweaver" | "hssd";
   scene_id: string;
   scene_uid: string;
   subset?: string | null;
@@ -333,8 +337,11 @@ export interface RenderableSceneWeaverSceneManifest {
     room_type?: string | null;
     dimensions?: { width?: number | null; length?: number | null; height?: number | null } | null;
   } | null;
-  objects: RenderableSceneWeaverObject[];
+  objects: RenderableWholeSceneObject[];
 }
+
+export type RenderableSceneWeaverSceneManifest = RenderableWholeSceneGlbSceneManifest;
+export type RenderableHssdSceneManifest = RenderableWholeSceneGlbSceneManifest;
 
 export interface Renderable3dFrontSceneManifest {
   schema_version: number;
@@ -354,5 +361,5 @@ export type RenderableSceneManifest =
   | RenderableHsmSceneManifest
   | RenderableSageSceneManifest
   | RenderableSceneSmithSceneManifest
-  | RenderableSceneWeaverSceneManifest
+  | RenderableWholeSceneGlbSceneManifest
   | Renderable3dFrontSceneManifest;
