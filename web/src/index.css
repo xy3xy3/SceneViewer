@@ -242,6 +242,50 @@ a {
   min-height: 0;
 }
 
+.canvas-debug-hud {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(320px, calc(100% - 32px));
+  pointer-events: none;
+}
+
+.canvas-debug-card {
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(2, 6, 23, 0.82);
+  backdrop-filter: blur(16px);
+}
+
+.canvas-debug-card span,
+.canvas-debug-card strong,
+.canvas-debug-card p {
+  display: block;
+}
+
+.canvas-debug-card span {
+  color: #64748b;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.canvas-debug-card strong {
+  margin-top: 6px;
+  color: #f8fafc;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.canvas-debug-card p {
+  margin: 6px 0 0;
+  color: #94a3b8;
+  font-size: 0.76rem;
+}
+
 .canvas-progress {
   display: flex;
   flex-direction: column;
@@ -498,6 +542,155 @@ a {
   gap: 10px;
 }
 
+.debug-coordinate-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.debug-coordinate-card,
+.debug-object-summary,
+.debug-coordinate-row {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.debug-coordinate-card {
+  padding: 12px;
+}
+
+.debug-coordinate-card span,
+.debug-object-summary span,
+.debug-axis-field span {
+  display: block;
+  color: #64748b;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+}
+
+.debug-coordinate-card strong,
+.debug-object-summary strong {
+  display: block;
+  margin-top: 6px;
+  color: #f8fafc;
+}
+
+.debug-coordinate-card p,
+.debug-object-summary p {
+  margin: 6px 0 0;
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+.debug-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.debug-object-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+}
+
+.debug-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  background: rgba(56, 189, 248, 0.12);
+  color: #bae6fd;
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.debug-coordinate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.debug-coordinate-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.debug-coordinate-row span {
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+.debug-coordinate-row code {
+  color: #e2e8f0;
+  font-size: 0.82rem;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.debug-axis-editor {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.debug-axis-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.debug-axis-field input {
+  width: 100%;
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(15, 23, 42, 0.9);
+  color: #e2e8f0;
+  padding: 0 10px;
+  outline: none;
+}
+
+.debug-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.debug-action-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 14px;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  background: rgba(56, 189, 248, 0.12);
+  color: #bae6fd;
+  cursor: pointer;
+}
+
+.debug-action-button-secondary {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: #cbd5e1;
+}
+
+.debug-action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.debug-hint {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 0.82rem;
+}
+
 .metric-card {
   padding: 12px;
   background: rgba(255, 255, 255, 0.04);
@@ -656,6 +849,12 @@ a {
     right: 12px;
   }
 
+  .canvas-debug-hud {
+    left: 12px;
+    right: 12px;
+    width: auto;
+  }
+
   .canvas-progress {
     padding: 10px 12px;
   }
@@ -670,12 +869,23 @@ a {
   }
 
   .metric-grid,
-  .image-grid {
+  .image-grid,
+  .debug-coordinate-grid,
+  .debug-axis-editor {
     grid-template-columns: 1fr;
   }
 
   .info-panel-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .debug-object-summary,
+  .debug-coordinate-row {
+    flex-direction: column;
+  }
+
+  .debug-pill {
+    white-space: normal;
   }
 }

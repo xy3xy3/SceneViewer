@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Grid, OrbitControls } from "@react-three/drei";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type {
   Renderable3dFrontSceneManifest,
@@ -19,6 +19,7 @@ import {
   PreviewEnvironment,
   type RenderProgressSnapshot,
   type ResourceProgressSnapshot,
+  type Vector3Tuple,
   formatProgressItemLabel,
   inferParsingState,
 } from "./scenePreview/shared";
@@ -29,6 +30,11 @@ interface ScenePreviewCanvasProps {
   wallOpacity: number;
   wallDisplayMode: "solid" | "transparent" | "hidden" | "wireframe";
   showObjectLabels: boolean;
+  selectedObjectId: string | null;
+  selectedObjectDebugInfo?: ScenePreviewDebugObjectSnapshot | null;
+  objectPositionOverrides?: Record<string, Vector3Tuple>;
+  onSelectedObjectChange?: (id: string | null) => void;
+  onPointerDebugChange?: (snapshot: ScenePointerDebugSnapshot | null) => void;
   onProgressChange?: (snapshot: ScenePreviewProgressSnapshot) => void;
 }
 
@@ -44,6 +50,19 @@ export interface ScenePreviewProgressSnapshot {
   overallProgress: number;
   previewReady: boolean;
   resourceActive: boolean;
+}
+
+export interface ScenePointerDebugSnapshot {
+  canvas: [number, number];
+  world: Vector3Tuple | null;
+}
+
+export interface ScenePreviewDebugObjectSnapshot {
+  id: string;
+  label: string;
+  originalPosition: Vector3Tuple;
+  currentPosition: Vector3Tuple;
+  hasOverride: boolean;
 }
 
 function createProgressSnapshot(
@@ -98,6 +117,99 @@ function createProgressSnapshot(
     previewReady,
     resourceActive,
   };
+}
+
+function formatCoordinate(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "-";
+  }
+  return value.toFixed(3);
+}
+
+function PointerCoordinateReporter({
+  sceneKey,
+  onChange,
+}: {
+  sceneKey: string;
+  onChange: (snapshot: ScenePointerDebugSnapshot | null) => void;
+}) {
+  const { camera, gl } = useThree();
+
+  useEffect(() => {
+    const domElement = gl.domElement;
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const intersection = new THREE.Vector3();
+
+    function handlePointerMove(event: PointerEvent) {
+      const rect = domElement.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        onChange(null);
+        return;
+      }
+
+      const canvasX = event.clientX - rect.left;
+      const canvasY = event.clientY - rect.top;
+      pointer.set((canvasX / rect.width) * 2 - 1, -(canvasY / rect.height) * 2 + 1);
+      raycaster.setFromCamera(pointer, camera);
+
+      const hit = raycaster.ray.intersectPlane(plane, intersection);
+      onChange({
+        canvas: [Math.round(canvasX), Math.round(canvasY)],
+        world: hit ? [intersection.x, intersection.y, intersection.z] : null,
+      });
+    }
+
+    function handlePointerLeave() {
+      onChange(null);
+    }
+
+    domElement.addEventListener("pointermove", handlePointerMove);
+    domElement.addEventListener("pointerleave", handlePointerLeave);
+
+    return () => {
+      domElement.removeEventListener("pointermove", handlePointerMove);
+      domElement.removeEventListener("pointerleave", handlePointerLeave);
+      onChange(null);
+    };
+  }, [camera, gl, onChange, sceneKey]);
+
+  return null;
+}
+
+function CanvasDebugHud({
+  pointerDebug,
+  selectedObjectDebugInfo,
+}: {
+  pointerDebug: ScenePointerDebugSnapshot | null;
+  selectedObjectDebugInfo?: ScenePreviewDebugObjectSnapshot | null;
+}) {
+  return (
+    <div className="canvas-debug-hud">
+      <div className="canvas-debug-card">
+        <span>Cursor</span>
+        <strong>
+          {pointerDebug ? `${pointerDebug.canvas[0]}, ${pointerDebug.canvas[1]}` : "Move on canvas"}
+        </strong>
+        <p>
+          {pointerDebug?.world
+            ? `World ${formatCoordinate(pointerDebug.world[0])}, ${formatCoordinate(pointerDebug.world[1])}, ${formatCoordinate(pointerDebug.world[2])}`
+            : "Ground-plane world coordinates"}
+        </p>
+      </div>
+
+      <div className="canvas-debug-card">
+        <span>Selected Object</span>
+        <strong>{selectedObjectDebugInfo?.label || "Nothing selected"}</strong>
+        <p>
+          {selectedObjectDebugInfo
+            ? `${formatCoordinate(selectedObjectDebugInfo.currentPosition[0])}, ${formatCoordinate(selectedObjectDebugInfo.currentPosition[1])}, ${formatCoordinate(selectedObjectDebugInfo.currentPosition[2])}`
+            : "Click an object to inspect and tweak coordinates"}
+        </p>
+      </div>
+    </div>
+  );
 }
 
 export function ScenePreviewProgressIndicator({
@@ -174,6 +286,9 @@ function PreviewContent({
   wallOpacity,
   wallDisplayMode,
   showObjectLabels,
+  selectedObjectId,
+  onSelectedObjectChange,
+  objectPositionOverrides,
   onRenderProgressChange,
 }: {
   scene: SceneManifest | null;
@@ -181,6 +296,9 @@ function PreviewContent({
   wallOpacity: number;
   wallDisplayMode: "solid" | "transparent" | "hidden" | "wireframe";
   showObjectLabels: boolean;
+  selectedObjectId: string | null;
+  onSelectedObjectChange: (id: string | null) => void;
+  objectPositionOverrides?: Record<string, Vector3Tuple>;
   onRenderProgressChange: (snapshot: RenderProgressSnapshot) => void;
 }) {
   return (
@@ -211,6 +329,9 @@ function PreviewContent({
           wallOpacity={wallOpacity}
           wallDisplayMode={wallDisplayMode}
           showObjectLabels={showObjectLabels}
+          selectedObjectId={selectedObjectId}
+          onSelectedObjectChange={onSelectedObjectChange}
+          objectPositionOverrides={objectPositionOverrides}
           onRenderProgressChange={onRenderProgressChange}
         />
       ) : renderScene.dataset === "3dfront" ? (
@@ -220,6 +341,9 @@ function PreviewContent({
           wallOpacity={wallOpacity}
           wallDisplayMode={wallDisplayMode}
           showObjectLabels={showObjectLabels}
+          selectedObjectId={selectedObjectId}
+          onSelectedObjectChange={onSelectedObjectChange}
+          objectPositionOverrides={objectPositionOverrides}
           onRenderProgressChange={onRenderProgressChange}
         />
       ) : renderScene.dataset === "sceneweaver" || renderScene.dataset === "hssd" ? (
@@ -227,6 +351,9 @@ function PreviewContent({
           key={renderScene.scene_uid}
           renderScene={renderScene as RenderableWholeSceneGlbSceneManifest}
           showObjectLabels={showObjectLabels}
+          selectedObjectId={selectedObjectId}
+          onSelectedObjectChange={onSelectedObjectChange}
+          objectPositionOverrides={objectPositionOverrides}
           onRenderProgressChange={onRenderProgressChange}
         />
       ) : (
@@ -237,6 +364,9 @@ function PreviewContent({
           wallOpacity={wallOpacity}
           wallDisplayMode={wallDisplayMode}
           showObjectLabels={showObjectLabels}
+          selectedObjectId={selectedObjectId}
+          onSelectedObjectChange={onSelectedObjectChange}
+          objectPositionOverrides={objectPositionOverrides}
           onRenderProgressChange={onRenderProgressChange}
         />
       )}
@@ -250,6 +380,11 @@ function ScenePreviewViewport({
   wallOpacity,
   wallDisplayMode,
   showObjectLabels,
+  selectedObjectId,
+  selectedObjectDebugInfo,
+  objectPositionOverrides,
+  onSelectedObjectChange,
+  onPointerDebugChange,
   onProgressChange,
 }: ScenePreviewViewportProps) {
   const [resourceProgress, setResourceProgress] = useState<ResourceProgressSnapshot>({
@@ -267,6 +402,14 @@ function ScenePreviewViewport({
     total: 0,
     progress: 0,
   });
+  const [pointerDebug, setPointerDebug] = useState<ScenePointerDebugSnapshot | null>(null);
+  const handlePointerDebugChange = useCallback(
+    (snapshot: ScenePointerDebugSnapshot | null) => {
+      setPointerDebug(snapshot);
+      onPointerDebugChange?.(snapshot);
+    },
+    [onPointerDebugChange],
+  );
 
   let badge = "";
   switch (renderScene.dataset) {
@@ -306,6 +449,10 @@ function ScenePreviewViewport({
         gl={{ antialias: true }}
       >
         <color attach="background" args={["#020617"]} />
+        <PointerCoordinateReporter
+          sceneKey={renderScene.scene_uid}
+          onChange={handlePointerDebugChange}
+        />
         <LoadingProgressReporter sceneKey={renderScene.scene_uid} onChange={setResourceProgress} />
         <PreviewContent
           key={renderScene.scene_uid}
@@ -314,6 +461,9 @@ function ScenePreviewViewport({
           wallOpacity={wallOpacity}
           wallDisplayMode={wallDisplayMode}
           showObjectLabels={showObjectLabels}
+          selectedObjectId={selectedObjectId}
+          onSelectedObjectChange={onSelectedObjectChange ?? (() => undefined)}
+          objectPositionOverrides={objectPositionOverrides}
           onRenderProgressChange={setRenderProgress}
         />
         <OrbitControls
@@ -330,10 +480,15 @@ function ScenePreviewViewport({
         />
       </Canvas>
 
+      <CanvasDebugHud
+        pointerDebug={pointerDebug}
+        selectedObjectDebugInfo={selectedObjectDebugInfo}
+      />
+
       <div className="canvas-caption">
         <div>
           <strong>Three.js Preview</strong>
-          <span>悬停看单个标签，点击固定，Ctrl/Cmd+点击取消固定</span>
+          <span>悬停看标签，点击固定，并可在右侧模拟改坐标</span>
         </div>
         <span className="canvas-badge">{badge}</span>
       </div>

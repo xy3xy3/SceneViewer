@@ -25,6 +25,7 @@ import {
   expandBounds,
   finalizeBounds,
   labelText,
+  resolveObjectPosition,
   updateMeasuredBoundsMap,
 } from "./shared";
 
@@ -80,16 +81,21 @@ export function RoomLayoutPreviewContent({
   wallOpacity,
   wallDisplayMode,
   showObjectLabels,
+  selectedObjectId,
+  onSelectedObjectChange,
+  objectPositionOverrides,
   onRenderProgressChange,
 }: {
   renderScene: RoomLayoutRenderScene;
   wallOpacity: number;
   wallDisplayMode: WallDisplayMode;
   showObjectLabels: boolean;
+  selectedObjectId: string | null;
+  onSelectedObjectChange: (id: string | null) => void;
+  objectPositionOverrides?: Record<string, Vector3Tuple>;
   onRenderProgressChange: (snapshot: RenderProgressSnapshot) => void;
 }) {
   const [hoveredObjectId, setHoveredObjectId] = useState<string | null>(null);
-  const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [fitVersion, setFitVersion] = useState(0);
   const [measuredObjectBounds, setMeasuredObjectBounds] = useState<Record<string, SceneBounds>>({});
   const roomLayoutAssets = useMemo(() => {
@@ -98,7 +104,7 @@ export function RoomLayoutPreviewContent({
         (object): AssetPlacement => ({
           key: object.id,
           assetPath: object.asset_path,
-          position: object.position,
+          position: resolveObjectPosition(object.id, object.position, objectPositionOverrides),
           rotationYDeg: object.rotation_y_deg,
           scale: object.scale,
         }),
@@ -109,13 +115,13 @@ export function RoomLayoutPreviewContent({
       (object): AssetPlacement => ({
         key: object.id,
         assetPath: object.asset_path,
-        position: object.position,
+        position: resolveObjectPosition(object.id, object.position, objectPositionOverrides),
         rotationYDeg: object.rotation_y_deg,
         quaternion: object.quaternion,
         scale: object.scale,
       }),
     );
-  }, [renderScene]);
+  }, [objectPositionOverrides, renderScene]);
   const [batchProgress, setBatchProgress] = useState(() =>
     createEmptyBatchProgress(roomLayoutAssets.length),
   );
@@ -124,10 +130,11 @@ export function RoomLayoutPreviewContent({
     if (renderScene.dataset === "sage") {
       return renderScene.objects.map((object) => {
         const measured = measuredObjectBounds[object.id];
+        const resolvedPosition = resolveObjectPosition(object.id, object.position, objectPositionOverrides);
         return {
           id: object.id,
           label: labelText(object.type || object.description, object.id),
-          position: measured?.center ?? object.position,
+          position: measured?.center ?? resolvedPosition,
           size: measured?.size ?? [
             Math.max(object.native_size[0] * object.scale[0], 0.18),
             Math.max(object.native_size[1] * object.scale[1], 0.18),
@@ -139,6 +146,7 @@ export function RoomLayoutPreviewContent({
 
     return renderScene.objects.map((object) => {
       const measured = measuredObjectBounds[object.id];
+      const resolvedPosition = resolveObjectPosition(object.id, object.position, objectPositionOverrides);
       const preferredLabel =
         object.name ||
         object.semantic_label ||
@@ -150,7 +158,7 @@ export function RoomLayoutPreviewContent({
       return {
         id: object.id,
         label: labelText(preferredLabel, object.id),
-        position: measured?.center ?? object.position,
+        position: measured?.center ?? resolvedPosition,
         size: measured?.size ?? [
           Math.max(Math.abs(object.scale[0]), 0.45),
           Math.max(Math.abs(object.scale[1]), 0.45),
@@ -158,7 +166,7 @@ export function RoomLayoutPreviewContent({
         ],
       };
     });
-  }, [measuredObjectBounds, renderScene]);
+  }, [measuredObjectBounds, objectPositionOverrides, renderScene]);
   const objectLabels = useMemo(
     () => buildObjectLabels(inspectableObjects, showObjectLabels, selectedObjectId, hoveredObjectId),
     [hoveredObjectId, inspectableObjects, selectedObjectId, showObjectLabels],
@@ -181,12 +189,11 @@ export function RoomLayoutPreviewContent({
   }, [batchProgress.complete, batchProgress.readyCount, onRenderProgressChange, roomLayoutAssets.length]);
 
   function handleObjectSelect(id: string, additive: boolean) {
-    setSelectedObjectId((current) => {
-      if (additive && current === id) {
-        return null;
-      }
-      return id;
-    });
+    if (additive && selectedObjectId === id) {
+      onSelectedObjectChange(null);
+      return;
+    }
+    onSelectedObjectChange(id);
   }
 
   return (
@@ -195,7 +202,7 @@ export function RoomLayoutPreviewContent({
       <group
         onPointerMissed={() => {
           setHoveredObjectId(null);
-          setSelectedObjectId(null);
+          onSelectedObjectChange(null);
           document.body.style.cursor = "default";
         }}
       >

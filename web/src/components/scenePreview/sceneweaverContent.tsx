@@ -18,6 +18,7 @@ import {
   expandBounds,
   finalizeBounds,
   labelText,
+  resolveObjectPosition,
   updateMeasuredBoundsMap,
 } from "./shared";
 
@@ -110,6 +111,7 @@ function computeSceneWeaverBounds(
 
 function buildWholeSceneObjectAssets(
   renderScene: RenderableWholeSceneGlbSceneManifest,
+  positionOverrides?: Record<string, Vector3Tuple>,
 ): AssetPlacement[] {
   return renderScene.objects
     .filter((object) => Boolean(object.asset_path))
@@ -117,7 +119,7 @@ function buildWholeSceneObjectAssets(
       (object): AssetPlacement => ({
         key: object.id,
         assetPath: object.asset_path!,
-        position: object.position,
+        position: resolveObjectPosition(object.id, object.position, positionOverrides),
         rotationYDeg: object.rotation_y_deg,
         quaternion: object.quaternion,
         scale: object.scale ?? [1, 1, 1],
@@ -128,14 +130,19 @@ function buildWholeSceneObjectAssets(
 export function SceneWeaverPreviewContent({
   renderScene,
   showObjectLabels,
+  selectedObjectId,
+  onSelectedObjectChange,
+  objectPositionOverrides,
   onRenderProgressChange,
 }: {
   renderScene: RenderableWholeSceneGlbSceneManifest;
   showObjectLabels: boolean;
+  selectedObjectId: string | null;
+  onSelectedObjectChange: (id: string | null) => void;
+  objectPositionOverrides?: Record<string, Vector3Tuple>;
   onRenderProgressChange: (snapshot: RenderProgressSnapshot) => void;
 }) {
   const [hoveredObjectId, setHoveredObjectId] = useState<string | null>(null);
-  const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [fitVersion, setFitVersion] = useState(0);
   const [measuredSceneBounds, setMeasuredSceneBounds] = useState<SceneBounds | null>(null);
   const [measuredObjectBounds, setMeasuredObjectBounds] = useState<Record<string, SceneBounds>>({});
@@ -151,7 +158,10 @@ export function SceneWeaverPreviewContent({
     ],
     [renderScene.scene_glb, renderScene.scene_uid],
   );
-  const objectAssets = useMemo(() => buildWholeSceneObjectAssets(renderScene), [renderScene]);
+  const objectAssets = useMemo(
+    () => buildWholeSceneObjectAssets(renderScene, objectPositionOverrides),
+    [objectPositionOverrides, renderScene],
+  );
   const [sceneBatchProgress, setSceneBatchProgress] = useState(() =>
     createEmptyBatchProgress(sceneAssets.length),
   );
@@ -163,10 +173,12 @@ export function SceneWeaverPreviewContent({
       renderScene.objects.map((object) => ({
         id: object.id,
         label: labelText(object.object_type || object.description, object.id),
-        position: measuredObjectBounds[object.id]?.center ?? object.position,
+        position:
+          measuredObjectBounds[object.id]?.center ??
+          resolveObjectPosition(object.id, object.position, objectPositionOverrides),
         size: measuredObjectBounds[object.id]?.size ?? object.size ?? [0.25, 0.25, 0.25],
       })),
-    [measuredObjectBounds, renderScene.objects],
+    [measuredObjectBounds, objectPositionOverrides, renderScene.objects],
   );
   const objectLabels = useMemo(
     () => buildObjectLabels(inspectableObjects, showObjectLabels, selectedObjectId, hoveredObjectId),
@@ -214,12 +226,11 @@ export function SceneWeaverPreviewContent({
   ]);
 
   function handleObjectSelect(id: string, additive: boolean) {
-    setSelectedObjectId((current) => {
-      if (additive && current === id) {
-        return null;
-      }
-      return id;
-    });
+    if (additive && selectedObjectId === id) {
+      onSelectedObjectChange(null);
+      return;
+    }
+    onSelectedObjectChange(id);
   }
 
   return (
@@ -228,7 +239,7 @@ export function SceneWeaverPreviewContent({
       <group
         onPointerMissed={() => {
           setHoveredObjectId(null);
-          setSelectedObjectId(null);
+          onSelectedObjectChange(null);
           document.body.style.cursor = "default";
         }}
       >

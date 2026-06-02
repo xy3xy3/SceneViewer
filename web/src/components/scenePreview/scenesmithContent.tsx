@@ -3,6 +3,7 @@ import type { RenderableSceneSmithSceneManifest, SceneManifest } from "../../typ
 import {
   BatchedAssetModels,
   Bounds,
+  type Vector3Tuple,
   type RenderProgressSnapshot,
   type SceneBounds,
   type WallDisplayMode,
@@ -25,6 +26,9 @@ export function SceneSmithPreviewContent({
   wallOpacity,
   wallDisplayMode,
   showObjectLabels,
+  selectedObjectId,
+  onSelectedObjectChange,
+  objectPositionOverrides,
   onRenderProgressChange,
 }: {
   scene: SceneManifest | null;
@@ -32,10 +36,12 @@ export function SceneSmithPreviewContent({
   wallOpacity: number;
   wallDisplayMode: WallDisplayMode;
   showObjectLabels: boolean;
+  selectedObjectId: string | null;
+  onSelectedObjectChange: (id: string | null) => void;
+  objectPositionOverrides?: Record<string, Vector3Tuple>;
   onRenderProgressChange: (snapshot: RenderProgressSnapshot) => void;
 }) {
   const [hoveredObjectId, setHoveredObjectId] = useState<string | null>(null);
-  const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [fitVersion, setFitVersion] = useState(0);
   const roomGeometryPaths = useMemo(() => sceneSmithRoomGeometryPaths(scene), [scene]);
   const [shellsReady, setShellsReady] = useState(renderScene.room_shells.length === 0);
@@ -54,8 +60,8 @@ export function SceneSmithPreviewContent({
     [renderScene, shellTransformMap, shellTransformsLoaded, wallDisplayMode, wallOpacity],
   );
   const objectAssets = useMemo(
-    () => buildSceneSmithObjectAssets(renderScene),
-    [renderScene],
+    () => buildSceneSmithObjectAssets(renderScene, objectPositionOverrides),
+    [objectPositionOverrides, renderScene],
   );
   const [shellBatchProgress, setShellBatchProgress] = useState(() =>
     createEmptyBatchProgress(renderScene.room_shells.length),
@@ -73,8 +79,9 @@ export function SceneSmithPreviewContent({
         scene,
         renderScene,
         measuredObjectBounds,
+        positionOverrides: objectPositionOverrides,
       }),
-    [measuredObjectBounds, renderScene, scene],
+    [measuredObjectBounds, objectPositionOverrides, renderScene, scene],
   );
   const objectLabels = useMemo(
     () => buildObjectLabels(inspectableObjects, showObjectLabels, selectedObjectId, hoveredObjectId),
@@ -131,12 +138,11 @@ export function SceneSmithPreviewContent({
   ]);
 
   function handleObjectSelect(id: string, additive: boolean) {
-    setSelectedObjectId((current) => {
-      if (additive && current === id) {
-        return null;
-      }
-      return id;
-    });
+    if (additive && selectedObjectId === id) {
+      onSelectedObjectChange(null);
+      return;
+    }
+    onSelectedObjectChange(id);
   }
 
   return (
@@ -145,7 +151,7 @@ export function SceneSmithPreviewContent({
       <group
         onPointerMissed={() => {
           setHoveredObjectId(null);
-          setSelectedObjectId(null);
+          onSelectedObjectChange(null);
           document.body.style.cursor = "default";
         }}
       >

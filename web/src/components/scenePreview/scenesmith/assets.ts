@@ -1,6 +1,7 @@
 import type { RenderableSceneSmithSceneManifest, SceneManifest } from "../../../types";
 import {
   resolveWallOpacity,
+  resolveObjectPosition,
   type AssetPlacement,
   type SceneSmithShellTransform,
   type Vector3Tuple,
@@ -64,11 +65,12 @@ export function buildSceneSmithShellAssets({
 
 export function buildSceneSmithObjectAssets(
   renderScene: RenderableSceneSmithSceneManifest,
+  positionOverrides?: Record<string, Vector3Tuple>,
 ): AssetPlacement[] {
   return renderScene.objects.map((object): AssetPlacement => ({
     key: object.id,
     assetPath: object.asset_path,
-    position: object.position,
+    position: resolveObjectPosition(object.id, object.position, positionOverrides),
     rotationYDeg: object.rotation_y_deg,
     quaternion: object.quaternion,
     scale: object.scale,

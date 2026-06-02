@@ -1208,6 +1208,14 @@ export function updateMeasuredBoundsMap(
   };
 }
 
+export function resolveObjectPosition(
+  objectId: string,
+  fallback: Vector3Tuple,
+  positionOverrides?: Record<string, Vector3Tuple>,
+): Vector3Tuple {
+  return positionOverrides?.[objectId] ?? fallback;
+}
+
 export function SageRoomShell({
   room,
   wallOpacity,

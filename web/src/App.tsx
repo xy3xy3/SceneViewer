@@ -10,12 +10,16 @@ import {
   Layers3,
   Tag,
   ScrollText,
+  RotateCcw,
 } from "lucide-react";
 import {
   ScenePreviewCanvas,
+  type ScenePointerDebugSnapshot,
+  type ScenePreviewDebugObjectSnapshot,
   ScenePreviewProgressIndicator,
   type ScenePreviewProgressSnapshot,
 } from "./components/ScenePreviewCanvas";
+import type { Vector3Tuple } from "./components/scenePreview/shared";
 import { fetchRepoJson, toRepoAssetUrl } from "./lib/repoAssets";
 import type {
   DatasetCatalog,
@@ -32,6 +36,21 @@ import type {
 import "./index.css";
 
 type WallDisplayMode = "solid" | "transparent" | "hidden" | "wireframe";
+type DebugAxis = "x" | "y" | "z";
+type CoordinateDraft = Record<DebugAxis, string>;
+
+type RenderableDebugObject = {
+  id: string;
+  label: string;
+  originalPosition: Vector3Tuple;
+  sourceId?: string | null;
+};
+
+const DEBUG_AXES: Array<{ axis: DebugAxis; index: 0 | 1 | 2 }> = [
+  { axis: "x", index: 0 },
+  { axis: "y", index: 1 },
+  { axis: "z", index: 2 },
+];
 
 function formatDatasetLabel(dataset: string): string {
   if (dataset === "hsm") {
@@ -124,6 +143,103 @@ function roomSubtitle(room: NormalizedRoom, dataset: SceneManifest["dataset"]): 
   return `${objectCount} objects · ${room.floor_plan_assets?.wall_gltfs?.length ?? 0} wall meshes`;
 }
 
+function formatCoordinate(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "-";
+  }
+  return value.toFixed(3);
+}
+
+function formatCoordinateInput(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "0";
+  }
+  return value.toFixed(3);
+}
+
+function formatVector(value: Vector3Tuple): string {
+  return `${formatCoordinate(value[0])}, ${formatCoordinate(value[1])}, ${formatCoordinate(value[2])}`;
+}
+
+function positionsEqual(left: Vector3Tuple, right: Vector3Tuple, epsilon = 0.0001): boolean {
+  return left.every((value, index) => Math.abs(value - right[index]) <= epsilon);
+}
+
+function buildRenderableDebugObjects(
+  scene: SceneManifest | null,
+  renderScene: RenderableSceneManifest | null,
+): RenderableDebugObject[] {
+  if (!renderScene) {
+    return [];
+  }
+
+  const sourceObjects = new Map((scene?.normalized.objects ?? []).map((object) => [object.id, object] as const));
+
+  switch (renderScene.dataset) {
+    case "sage":
+      return renderScene.objects.map((object) => ({
+        id: object.id,
+        label: object.type || object.description || object.source_id || object.id,
+        originalPosition: object.position,
+        sourceId: object.source_id,
+      }));
+    case "hsm":
+      return renderScene.objects.map((object) => ({
+        id: object.id,
+        label:
+          object.name ||
+          object.semantic_label ||
+          object.object_type ||
+          object.category ||
+          object.description ||
+          object.source_id ||
+          object.id,
+        originalPosition: object.position,
+        sourceId: object.source_id,
+      }));
+    case "scenesmith":
+      return renderScene.objects.map((object) => {
+        const sourceObject = sourceObjects.get(object.id);
+        return {
+          id: object.id,
+          label:
+            sourceObject?.name ||
+            sourceObject?.object_type ||
+            object.object_type ||
+            sourceObject?.description ||
+            object.description ||
+            object.id,
+          originalPosition: object.position,
+        };
+      });
+    case "3dfront":
+      return renderScene.objects.map((object) => {
+        const sourceObject = sourceObjects.get(object.id);
+        return {
+          id: object.id,
+          label:
+            sourceObject?.name ||
+            sourceObject?.type ||
+            sourceObject?.object_type ||
+            object.object_type ||
+            object.description ||
+            object.source_ref ||
+            object.id,
+          originalPosition: object.position,
+          sourceId: object.source_model_jid ?? object.source_ref,
+        };
+      });
+    case "sceneweaver":
+    case "hssd":
+      return renderScene.objects.map((object) => ({
+        id: object.id,
+        label: object.object_type || object.description || object.source_id || object.id,
+        originalPosition: object.position,
+        sourceId: object.source_id,
+      }));
+  }
+}
+
 async function copyText(text: string): Promise<boolean> {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -159,6 +275,12 @@ export default function App() {
   const [wallOpacity, setWallOpacity] = useState(0.35);
   const [wallDisplayMode, setWallDisplayMode] = useState<WallDisplayMode>("transparent");
   const [showObjectLabels, setShowObjectLabels] = useState(false);
+  const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
+  const [objectPositionOverrides, setObjectPositionOverrides] = useState<
+    Record<string, Vector3Tuple>
+  >({});
+  const [pointerDebug, setPointerDebug] = useState<ScenePointerDebugSnapshot | null>(null);
+  const [positionDraft, setPositionDraft] = useState<CoordinateDraft | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [previewProgress, setPreviewProgress] = useState<ScenePreviewProgressSnapshot | null>(
     null,
@@ -373,6 +495,41 @@ export default function App() {
         preprocessedSceneSummaryMap.get(selectedSceneRenderSummary.scene_uid),
       )
     : selectedSceneSummary?.title || selectedSceneUid || "Choose a scene";
+  const renderableDebugObjects = useMemo(
+    () => buildRenderableDebugObjects(selectedScene, selectedRenderScene),
+    [selectedRenderScene, selectedScene],
+  );
+  const renderableDebugObjectMap = useMemo(
+    () => new Map(renderableDebugObjects.map((object) => [object.id, object] as const)),
+    [renderableDebugObjects],
+  );
+  const selectedObjectDebugInfo = useMemo<ScenePreviewDebugObjectSnapshot | null>(() => {
+    if (!selectedObjectId) {
+      return null;
+    }
+
+    const selectedObject = renderableDebugObjectMap.get(selectedObjectId);
+    if (!selectedObject) {
+      return null;
+    }
+
+    const overridePosition = objectPositionOverrides[selectedObject.id];
+    return {
+      id: selectedObject.id,
+      label: selectedObject.label,
+      originalPosition: selectedObject.originalPosition,
+      currentPosition: overridePosition ?? selectedObject.originalPosition,
+      hasOverride: Boolean(overridePosition),
+    };
+  }, [objectPositionOverrides, renderableDebugObjectMap, selectedObjectId]);
+  const selectedObjectDelta = selectedObjectDebugInfo
+    ? ([
+        selectedObjectDebugInfo.currentPosition[0] - selectedObjectDebugInfo.originalPosition[0],
+        selectedObjectDebugInfo.currentPosition[1] - selectedObjectDebugInfo.originalPosition[1],
+        selectedObjectDebugInfo.currentPosition[2] - selectedObjectDebugInfo.originalPosition[2],
+      ] as Vector3Tuple)
+    : null;
+  const hasPositionOverrides = Object.keys(objectPositionOverrides).length > 0;
 
   useEffect(() => {
     if (copyState === "idle") {
@@ -382,6 +539,38 @@ export default function App() {
     const timer = window.setTimeout(() => setCopyState("idle"), 1800);
     return () => window.clearTimeout(timer);
   }, [copyState]);
+
+  useEffect(() => {
+    setSelectedObjectId(null);
+    setObjectPositionOverrides({});
+    setPointerDebug(null);
+    setPositionDraft(null);
+  }, [selectedSceneUid]);
+
+  useEffect(() => {
+    if (!selectedObjectId || renderableDebugObjectMap.has(selectedObjectId)) {
+      return;
+    }
+    setSelectedObjectId(null);
+  }, [renderableDebugObjectMap, selectedObjectId]);
+
+  useEffect(() => {
+    if (!selectedObjectDebugInfo) {
+      setPositionDraft(null);
+      return;
+    }
+
+    setPositionDraft({
+      x: formatCoordinateInput(selectedObjectDebugInfo.currentPosition[0]),
+      y: formatCoordinateInput(selectedObjectDebugInfo.currentPosition[1]),
+      z: formatCoordinateInput(selectedObjectDebugInfo.currentPosition[2]),
+    });
+  }, [
+    selectedObjectDebugInfo?.id,
+    selectedObjectDebugInfo?.currentPosition[0],
+    selectedObjectDebugInfo?.currentPosition[1],
+    selectedObjectDebugInfo?.currentPosition[2],
+  ]);
 
   useEffect(() => {
     if (!visiblePreviewProgress?.previewReady) {
@@ -407,6 +596,107 @@ export default function App() {
 
   const handlePreviewProgressChange = useCallback((snapshot: ScenePreviewProgressSnapshot) => {
     setPreviewProgress(snapshot);
+  }, []);
+
+  const handlePointerDebugChange = useCallback((snapshot: ScenePointerDebugSnapshot | null) => {
+    setPointerDebug(snapshot);
+  }, []);
+
+  const updateSelectedObjectPosition = useCallback(
+    (objectId: string, nextPosition: Vector3Tuple) => {
+      const sourceObject = renderableDebugObjectMap.get(objectId);
+      if (!sourceObject) {
+        return;
+      }
+
+      setObjectPositionOverrides((current) => {
+        if (positionsEqual(sourceObject.originalPosition, nextPosition)) {
+          if (!(objectId in current)) {
+            return current;
+          }
+
+          const next = { ...current };
+          delete next[objectId];
+          return next;
+        }
+
+        return {
+          ...current,
+          [objectId]: nextPosition,
+        };
+      });
+    },
+    [renderableDebugObjectMap],
+  );
+
+  const handlePositionDraftChange = useCallback(
+    (axis: DebugAxis, value: string) => {
+      if (!selectedObjectDebugInfo) {
+        return;
+      }
+
+      setPositionDraft((current) => ({
+        x: current?.x ?? formatCoordinateInput(selectedObjectDebugInfo.currentPosition[0]),
+        y: current?.y ?? formatCoordinateInput(selectedObjectDebugInfo.currentPosition[1]),
+        z: current?.z ?? formatCoordinateInput(selectedObjectDebugInfo.currentPosition[2]),
+        [axis]: value,
+      }));
+
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) {
+        return;
+      }
+
+      const axisIndex = DEBUG_AXES.find((entry) => entry.axis === axis)?.index;
+      if (axisIndex === undefined) {
+        return;
+      }
+
+      const nextPosition = [...selectedObjectDebugInfo.currentPosition] as Vector3Tuple;
+      nextPosition[axisIndex] = parsed;
+      updateSelectedObjectPosition(selectedObjectDebugInfo.id, nextPosition);
+    },
+    [selectedObjectDebugInfo, updateSelectedObjectPosition],
+  );
+
+  const resetPositionDraft = useCallback(() => {
+    if (!selectedObjectDebugInfo) {
+      setPositionDraft(null);
+      return;
+    }
+
+    setPositionDraft({
+      x: formatCoordinateInput(selectedObjectDebugInfo.currentPosition[0]),
+      y: formatCoordinateInput(selectedObjectDebugInfo.currentPosition[1]),
+      z: formatCoordinateInput(selectedObjectDebugInfo.currentPosition[2]),
+    });
+  }, [selectedObjectDebugInfo]);
+
+  const handlePositionDraftBlur = useCallback(
+    (axis: DebugAxis) => {
+      if (!positionDraft) {
+        return;
+      }
+
+      const value = Number(positionDraft[axis]);
+      if (Number.isFinite(value)) {
+        return;
+      }
+
+      resetPositionDraft();
+    },
+    [positionDraft, resetPositionDraft],
+  );
+
+  const handleResetSelectedObjectPosition = useCallback(() => {
+    if (!selectedObjectDebugInfo) {
+      return;
+    }
+    updateSelectedObjectPosition(selectedObjectDebugInfo.id, selectedObjectDebugInfo.originalPosition);
+  }, [selectedObjectDebugInfo, updateSelectedObjectPosition]);
+
+  const handleResetAllObjectPositions = useCallback(() => {
+    setObjectPositionOverrides({});
   }, []);
 
   function handleSceneStep(direction: -1 | 1) {
@@ -561,6 +851,11 @@ export default function App() {
             wallOpacity={wallOpacity}
             wallDisplayMode={wallDisplayMode}
             showObjectLabels={showObjectLabels}
+            selectedObjectId={selectedObjectId}
+            selectedObjectDebugInfo={selectedObjectDebugInfo}
+            objectPositionOverrides={objectPositionOverrides}
+            onSelectedObjectChange={setSelectedObjectId}
+            onPointerDebugChange={handlePointerDebugChange}
             onProgressChange={handlePreviewProgressChange}
           />
         </section>
@@ -606,6 +901,104 @@ export default function App() {
                 </div>
               ))}
             </div>
+          </section>
+
+          <section className="info-card">
+            <div className="section-title">
+              <Tag size={16} />
+              <h3>Debug Coordinates</h3>
+            </div>
+
+            <div className="debug-coordinate-grid">
+              <div className="debug-coordinate-card">
+                <span>Canvas</span>
+                <strong>
+                  {pointerDebug ? `${pointerDebug.canvas[0]}, ${pointerDebug.canvas[1]}` : "--"}
+                </strong>
+                <p>Mouse position inside the preview canvas</p>
+              </div>
+              <div className="debug-coordinate-card">
+                <span>World</span>
+                <strong>{pointerDebug?.world ? formatVector(pointerDebug.world) : "--"}</strong>
+                <p>Ground-plane coordinates under the cursor</p>
+              </div>
+            </div>
+
+            {selectedObjectDebugInfo ? (
+              <div className="debug-editor">
+                <div className="debug-object-summary">
+                  <div>
+                    <span>Selected</span>
+                    <strong>{selectedObjectDebugInfo.label}</strong>
+                    <p>{selectedObjectDebugInfo.id}</p>
+                  </div>
+                  <div className="debug-pill">
+                    {selectedObjectDebugInfo.hasOverride ? "Simulated override" : "Original render position"}
+                  </div>
+                </div>
+
+                <div className="debug-coordinate-list">
+                  <div className="debug-coordinate-row">
+                    <span>Original</span>
+                    <code>{formatVector(selectedObjectDebugInfo.originalPosition)}</code>
+                  </div>
+                  <div className="debug-coordinate-row">
+                    <span>Current</span>
+                    <code>{formatVector(selectedObjectDebugInfo.currentPosition)}</code>
+                  </div>
+                  <div className="debug-coordinate-row">
+                    <span>Delta</span>
+                    <code>{selectedObjectDelta ? formatVector(selectedObjectDelta) : "--"}</code>
+                  </div>
+                </div>
+
+                <div className="debug-axis-editor">
+                  {DEBUG_AXES.map(({ axis }) => (
+                    <label key={axis} className="debug-axis-field">
+                      <span>{axis.toUpperCase()}</span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        step="0.05"
+                        value={positionDraft?.[axis] ?? ""}
+                        onChange={(event) => handlePositionDraftChange(axis, event.target.value)}
+                        onBlur={() => handlePositionDraftBlur(axis)}
+                      />
+                    </label>
+                  ))}
+                </div>
+
+                <div className="debug-actions">
+                  <button
+                    type="button"
+                    className="debug-action-button"
+                    onClick={handleResetSelectedObjectPosition}
+                    disabled={!selectedObjectDebugInfo.hasOverride}
+                  >
+                    <RotateCcw size={14} />
+                    <span>Reset Object</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="debug-action-button debug-action-button-secondary"
+                    onClick={handleResetAllObjectPositions}
+                    disabled={!hasPositionOverrides}
+                  >
+                    <RotateCcw size={14} />
+                    <span>Reset All</span>
+                  </button>
+                </div>
+
+                <p className="debug-hint">
+                  这些改动只在当前网页会话里生效，用于人类调试，不会写回场景文件。
+                </p>
+              </div>
+            ) : (
+              <p className="long-copy">
+                在左侧 3D 预览里点击任意物体后，这里会显示它的当前坐标，并允许你临时模拟修改
+                <code>x / y / z</code>。
+              </p>
+            )}
           </section>
 
           <section className="info-card">

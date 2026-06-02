@@ -2,24 +2,29 @@ import type { RenderableSceneSmithSceneManifest, SceneManifest } from "../../../
 import {
   compactSceneSmithName,
   labelText,
+  resolveObjectPosition,
   sceneSmithToThree,
   type InspectableObject,
   type SceneBounds,
+  type Vector3Tuple,
 } from "../shared";
 
 export function buildSceneSmithInspectableObjects({
   scene,
   renderScene,
   measuredObjectBounds,
+  positionOverrides,
 }: {
   scene: SceneManifest | null;
   renderScene: RenderableSceneSmithSceneManifest;
   measuredObjectBounds: Record<string, SceneBounds>;
+  positionOverrides?: Record<string, Vector3Tuple>;
 }): InspectableObject[] {
   const sourceObjects = new Map((scene?.normalized.objects ?? []).map((object) => [object.id, object] as const));
 
   return renderScene.objects.map((object) => {
     const measured = measuredObjectBounds[object.id];
+    const resolvedPosition = resolveObjectPosition(object.id, object.position, positionOverrides);
     const sourceObject = sourceObjects.get(object.id);
     const bboxMin = sourceObject?.bbox_min ?? null;
     const bboxMax = sourceObject?.bbox_max ?? null;
@@ -54,7 +59,7 @@ export function buildSceneSmithInspectableObjects({
     return {
       id: object.id,
       label: labelText(preferredLabel, object.id),
-      position: measured?.center ?? object.position,
+      position: measured?.center ?? resolvedPosition,
       size: measured?.size ?? [
         Math.max(Math.abs(object.scale[0]), 0.45),
         Math.max(Math.abs(object.scale[1]), 0.45),

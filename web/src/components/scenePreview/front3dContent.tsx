@@ -19,6 +19,7 @@ import {
   expandBounds,
   finalizeBounds,
   labelText,
+  resolveObjectPosition,
   roomShellOpacity,
   updateMeasuredBoundsMap,
 } from "./shared";
@@ -74,6 +75,9 @@ export function Front3DPreviewContent({
   wallOpacity,
   wallDisplayMode,
   showObjectLabels,
+  selectedObjectId,
+  onSelectedObjectChange,
+  objectPositionOverrides,
   onRenderProgressChange,
 }: {
   scene: SceneManifest | null;
@@ -81,10 +85,12 @@ export function Front3DPreviewContent({
   wallOpacity: number;
   wallDisplayMode: WallDisplayMode;
   showObjectLabels: boolean;
+  selectedObjectId: string | null;
+  onSelectedObjectChange: (id: string | null) => void;
+  objectPositionOverrides?: Record<string, Vector3Tuple>;
   onRenderProgressChange: (snapshot: RenderProgressSnapshot) => void;
 }) {
   const [hoveredObjectId, setHoveredObjectId] = useState<string | null>(null);
-  const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [fitVersion, setFitVersion] = useState(0);
   const [shellsReady, setShellsReady] = useState(renderScene.room_shells.length === 0);
   const [measuredShellBounds, setMeasuredShellBounds] = useState<Record<string, SceneBounds>>({});
@@ -131,13 +137,13 @@ export function Front3DPreviewContent({
         (object): AssetPlacement => ({
           key: object.id,
           assetPath: object.asset_path,
-          position: object.position,
+          position: resolveObjectPosition(object.id, object.position, objectPositionOverrides),
           rotationYDeg: object.rotation_y_deg,
           scale: object.scale,
           quaternion: object.quaternion,
         }),
       ),
-    [renderScene],
+    [objectPositionOverrides, renderScene],
   );
   const [shellBatchProgress, setShellBatchProgress] = useState(() =>
     createEmptyBatchProgress(renderScene.room_shells.length),
@@ -152,6 +158,7 @@ export function Front3DPreviewContent({
   const inspectableObjects = useMemo((): InspectableObject[] => {
     return renderScene.objects.map((object) => {
       const measured = measuredObjectBounds[object.id];
+      const resolvedPosition = resolveObjectPosition(object.id, object.position, objectPositionOverrides);
       const sourceObject = (scene?.normalized.objects ?? []).find((item) => item.id === object.id);
       const bboxMin = sourceObject?.bbox_min ?? null;
       const bboxMax = sourceObject?.bbox_max ?? null;
@@ -178,7 +185,7 @@ export function Front3DPreviewContent({
       return {
         id: object.id,
         label: labelText(preferredLabel, object.id),
-        position: measured?.center ?? object.position,
+        position: measured?.center ?? resolvedPosition,
         size: measured?.size ?? [
           Math.max(Math.abs(object.scale[0]), 0.45),
           Math.max(Math.abs(object.scale[1]), 0.45),
@@ -186,7 +193,7 @@ export function Front3DPreviewContent({
         ],
       };
     });
-  }, [measuredObjectBounds, renderScene, scene]);
+  }, [measuredObjectBounds, objectPositionOverrides, renderScene, scene]);
   const objectLabels = useMemo(
     () => buildObjectLabels(inspectableObjects, showObjectLabels, selectedObjectId, hoveredObjectId),
     [hoveredObjectId, inspectableObjects, selectedObjectId, showObjectLabels],
@@ -238,12 +245,11 @@ export function Front3DPreviewContent({
   ]);
 
   function handleObjectSelect(id: string, additive: boolean) {
-    setSelectedObjectId((current) => {
-      if (additive && current === id) {
-        return null;
-      }
-      return id;
-    });
+    if (additive && selectedObjectId === id) {
+      onSelectedObjectChange(null);
+      return;
+    }
+    onSelectedObjectChange(id);
   }
 
   return (
@@ -252,7 +258,7 @@ export function Front3DPreviewContent({
       <group
         onPointerMissed={() => {
           setHoveredObjectId(null);
-          setSelectedObjectId(null);
+          onSelectedObjectChange(null);
           document.body.style.cursor = "default";
         }}
       >
