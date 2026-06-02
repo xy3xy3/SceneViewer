@@ -25,6 +25,7 @@ from .download import (
 )
 from .hsm import HSM_DATASET_KEY, HSM_HSSD_ROOT, hsm_generated_scenes_root
 from .local_hssd import import_local_hssd_output
+from .local_hsm import import_local_hsm_output
 from .local_sceneweaver import import_local_sceneweaver_output
 from .local_scenesmith import import_local_scenesmith_output
 from .preprocess import (
@@ -164,7 +165,11 @@ def dataset_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParse
         "--destination",
         type=Path,
         default=HSM_HSSD_ROOT,
-        help="Target directory for HSSD assets. Defaults to assets/hsm/hssd-models.",
+        help=(
+            "Target directory for HSSD assets. "
+            "Defaults to SCENEVIEWER_HSSD_ROOT from .env/config.yml, "
+            "or assets/hsm/hssd-models/ if not set."
+        ),
     )
     hsm_hssd_parser.add_argument(
         "--source-scenes",
@@ -412,6 +417,58 @@ def main() -> None:
         default=8,
         help="Maximum concurrent workers when downloading hssd-hab metadata.",
     )
+    import_hsm_parser = subparsers.add_parser(
+        "import-hsm-local",
+        help="Import a local HSM project directory into assets/hsm/.",
+    )
+    import_hsm_parser.add_argument(
+        "source",
+        type=Path,
+        help=(
+            "A local HSM project root containing generated_scenes/, "
+            "support_region_dataset/, and data/preprocessed/."
+        ),
+    )
+    import_hsm_parser.add_argument(
+        "--destination",
+        type=Path,
+        default=DATASETS["hsm"].destination_root,
+        help="Target HSM dataset root. Defaults to assets/hsm.",
+    )
+    import_hsm_parser.add_argument(
+        "--hssd-source",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a local HSSD models checkout (containing objects/). "
+            "If omitted, falls back to SCENEVIEWER_HSSD_ROOT from .env/config.yml."
+        ),
+    )
+    import_hsm_parser.add_argument(
+        "--mode",
+        choices=["link", "copy"],
+        default="link",
+        help="Whether to symlink local directories or copy them into the repo.",
+    )
+    import_hsm_parser.add_argument(
+        "--force",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Replace existing imported directories with the same target path.",
+    )
+    import_hsm_parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help=(
+            "Skip targets that already exist. "
+            "When omitted, existing targets are replaced from the source."
+        ),
+    )
+    import_hsm_parser.add_argument(
+        "--build-preview",
+        action="store_true",
+        help="Also refresh HSM preprocessed and renderable assets after import.",
+    )
 
     args = parser.parse_args()
     if args.command == "import-scenesmith-local":
@@ -444,6 +501,18 @@ def main() -> None:
             destination_root=args.destination,
             force_download=args.force_download,
             force_extract=args.force_extract,
+            build_preview=args.build_preview,
+        )
+        print(json.dumps(payload, indent=2))
+        return
+    if args.command == "import-hsm-local":
+        replace_existing = args.force and not args.skip_existing
+        payload = import_local_hsm_output(
+            source=args.source,
+            destination_root=args.destination,
+            hssd_source=args.hssd_source,
+            mode=args.mode,
+            force=replace_existing,
             build_preview=args.build_preview,
         )
         print(json.dumps(payload, indent=2))

@@ -9,3 +9,8 @@ assets/*
 !assets/.gitkeep
 
 local/
+
+# User-specific configuration (may contain paths or tokens)
+.env
+config.yml
+config.yaml

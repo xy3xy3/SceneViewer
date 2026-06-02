@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 import math
 import shutil
@@ -10,10 +12,22 @@ from pathlib import Path
 import numpy as np
 
 from .config import ASSETS_ROOT, REPO_ROOT
+from . import env_config
 
 
 HSM_DATASET_KEY = "hsm"
-HSM_HSSD_ROOT = ASSETS_ROOT / HSM_DATASET_KEY / "hssd-models"
+
+def _resolve_hsm_hssd_root() -> Path:
+    """Resolve HSSD models root from env/config, falling back to assets/hsm/hssd-models."""
+    configured = env_config.get_path("SCENEVIEWER_HSSD_ROOT")
+    if configured is not None and configured.exists():
+        return configured
+    return ASSETS_ROOT / HSM_DATASET_KEY / "hssd-models"
+
+def get_hsm_hssd_root() -> Path:
+    return _resolve_hsm_hssd_root()
+
+HSM_HSSD_ROOT = _resolve_hsm_hssd_root()
 HSM_METADATA_ROOT = ASSETS_ROOT / HSM_DATASET_KEY / "metadata"
 HSM_HSSD_MODELS_REPO_ID = "hssd/hssd-models"
 HSM_HSSD_DECOMPOSED_REPO_ID = "hssd/hssd-hab"
@@ -25,6 +39,10 @@ HSM_RELEASE_METADATA_MEMBERS = {
     "object_categories": "data/preprocessed/object_categories.json",
     "hssd_index": "data/preprocessed/hssd_wnsynsetkey_index.json",
 }
+SCENEVAL_ANNOTATIONS_URL = (
+    "https://github.com/3dlg-hcvc/SceneEval/releases/download/"
+    "SceneEval-500_v250610/SceneEval-500_v250610.zip"
+)
 HSM_EXPORT_FIX_MATRIX = np.array(
     [
         [-1.0, 0.0, 0.0],
@@ -36,20 +54,46 @@ HSM_EXPORT_FIX_MATRIX = np.array(
 
 
 def ensure_hsm_hssd_models() -> None:
-    required_root = HSM_HSSD_ROOT / "objects"
+    hssd_root = get_hsm_hssd_root()
+    required_root = hssd_root / "objects"
     if required_root.exists():
         return
     raise SystemExit(
         "Missing HSSD model assets for HSM renderable export. "
-        "Place the HSSD dataset under assets/hsm/hssd-models/ first."
+        "Either:\n"
+        "  1. Place the HSSD dataset under assets/hsm/hssd-models/.\n"
+        "  2. Set SCENEVIEWER_HSSD_ROOT in .env or config.yml to point to an existing HSSD checkout.\n"
+        "     Example: SCENEVIEWER_HSSD_ROOT=/home/user/proj/scenesmith/data/hssd-models"
     )
 
 
 def repo_relative_path(path: Path) -> str:
+    # Use absolute() instead of resolve() to avoid following symlinks.
+    # This keeps paths inside the repo tree even when assets are symlinked
+    # to external directories (e.g. HSSD models).
+    abs_path = path.absolute()
     try:
-        return path.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+        return abs_path.relative_to(REPO_ROOT.absolute()).as_posix()
     except ValueError:
-        return path.resolve().as_posix()
+        return abs_path.as_posix()
+
+
+def hsm_repo_relative_path(path: Path) -> str:
+    """Return a stable repo-local path for HSM assets when a repo alias exists.
+
+    If HSM models are sourced from an external checkout via ``SCENEVIEWER_HSSD_ROOT``
+    but also exposed under ``assets/hsm/hssd-models`` (commonly as a symlink),
+    prefer exporting that repo-local alias so the web app can serve the file.
+    """
+
+    alias_root = ASSETS_ROOT / HSM_DATASET_KEY / "hssd-models"
+    try:
+        relative_to_hssd_root = path.resolve().relative_to(get_hsm_hssd_root().resolve())
+    except ValueError:
+        return repo_relative_path(path)
+
+    alias_path = alias_root / relative_to_hssd_root
+    return repo_relative_path(alias_path)
 
 
 def hsm_generated_scenes_root(destination: Path) -> Path:
@@ -61,10 +105,11 @@ def hsm_support_region_root(destination: Path) -> Path:
 
 
 def hsm_hssd_glb_path(mesh_id: str) -> Path:
+    hssd_root = get_hsm_hssd_root()
     if "_part_" in mesh_id:
         base_id = mesh_id.split("_part_", 1)[0]
-        return HSM_HSSD_ROOT / "objects" / "decomposed" / base_id / f"{mesh_id}.glb"
-    return HSM_HSSD_ROOT / "objects" / mesh_id[0] / f"{mesh_id}.glb"
+        return hssd_root / "objects" / "decomposed" / base_id / f"{mesh_id}.glb"
+    return hssd_root / "objects" / mesh_id[0] / f"{mesh_id}.glb"
 
 
 def _hsm_metadata_path(kind: str) -> Path:
@@ -89,6 +134,41 @@ def ensure_hsm_metadata() -> None:
                     shutil.copyfileobj(source, target)
     finally:
         archive_path.unlink(missing_ok=True)
+
+
+_SCENEAVAL_ANNOTATIONS_PATH = HSM_METADATA_ROOT / "annotations.csv"
+
+
+def ensure_sceneval_annotations() -> None:
+    """Download SceneEval-500 annotations.csv if not already present."""
+    if _SCENEAVAL_ANNOTATIONS_PATH.exists():
+        return
+    HSM_METADATA_ROOT.mkdir(parents=True, exist_ok=True)
+    archive_path = HSM_METADATA_ROOT / "SceneEval-500.zip"
+    urllib.request.urlretrieve(SCENEVAL_ANNOTATIONS_URL, archive_path)
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            with archive.open("annotations.csv") as source, _SCENEAVAL_ANNOTATIONS_PATH.open("wb") as target:
+                shutil.copyfileobj(source, target)
+    finally:
+        archive_path.unlink(missing_ok=True)
+
+
+def load_sceneval_annotations() -> dict[int, dict[str, str]]:
+    """Load SceneEval-500 annotations as a dict mapping scene ID to annotation fields."""
+    ensure_sceneval_annotations()
+    result: dict[int, dict[str, str]] = {}
+    if not _SCENEAVAL_ANNOTATIONS_PATH.exists():
+        return result
+    with _SCENEAVAL_ANNOTATIONS_PATH.open(encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            try:
+                scene_id = int(row["ID"])
+            except (KeyError, ValueError):
+                continue
+            result[scene_id] = dict(row)
+    return result
 
 
 def _iter_hssd_index_entries(data: object):

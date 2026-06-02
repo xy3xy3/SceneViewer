@@ -44,7 +44,8 @@ DATASETS: dict[str, DatasetSpec] = {
         destination_root=ASSETS_ROOT / "hsm",
         license_note=(
             "HSM scene JSONs are gated on Hugging Face, and renderable previews also require "
-            "local HSSD model GLBs under assets/hsm/hssd-models/."
+            "local HSSD model GLBs. Set SCENEVIEWER_HSSD_ROOT in .env or config.yml to point "
+            "to an existing HSSD checkout, or place them under assets/hsm/hssd-models/."
         ),
     ),
     "sage": DatasetSpec(

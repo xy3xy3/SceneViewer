@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ..hsm import load_sceneval_annotations
+
 from .common import *
 
 def _hsm_wall_entry(element: dict[str, object]) -> dict[str, object] | None:
@@ -87,6 +89,7 @@ def preprocess_hsm_dataset(scene_limit: int | None = None) -> dict[str, object]:
     source_root = hsm_generated_scenes_root(DATASETS[HSM_DATASET_KEY].destination_root)
     output_root = PREPROCESSED_ROOT / HSM_DATASET_KEY
     hssd_metadata_by_id = load_hsm_hssd_metadata()
+    sceneval_annotations = load_sceneval_annotations()
     scenes: list[dict[str, object]] = []
     skipped_scenes: list[dict[str, object]] = []
 
@@ -200,23 +203,34 @@ def preprocess_hsm_dataset(scene_limit: int | None = None) -> dict[str, object]:
 
             scene_id = hsm_scene_id_from_remote_path(scene_path.name)
             scene_uid = f"{HSM_DATASET_KEY}/{scene_id}"
+            # Look up prompt from SceneEval-500 annotations
+            scene_id_num = scene_id.removeprefix("scene_")
+            annotation = None
+            try:
+                annotation = sceneval_annotations.get(int(scene_id_num))
+            except (ValueError, TypeError):
+                pass
+            prompt_text = annotation.get("Description") if annotation else None
+            description = prompt_text or f"HSM generated scene {scene_id}"
             manifest = _scene_manifest_base(
                 dataset=HSM_DATASET_KEY,
                 scene_id=scene_id,
                 scene_uid=scene_uid,
                 subset=None,
                 scene_dir=scene_path.parent,
-                description=f"HSM generated scene {scene_id}",
+                description=description,
             )
             manifest["source"] = {
                 "scene_json": _repo_path(scene_path),
             }
+            if annotation:
+                manifest["sceneeval_annotation"] = annotation
             manifest.update(
                 {
                     "status": "ready",
                     "display": {
                         "title": scene_id,
-                        "subtitle": "HSM generated scene",
+                        "subtitle": prompt_text[:120] if prompt_text else "HSM generated scene",
                         "preview_images": [],
                     },
                     "stats": {
@@ -259,8 +273,9 @@ def preprocess_hsm_dataset(scene_limit: int | None = None) -> dict[str, object]:
                 {
                     "scene_id": scene_id,
                     "scene_uid": scene_uid,
-                    "description": manifest["description"],
+                    "description": description,
                     "title": scene_id,
+                    "subtitle": prompt_text[:120] if prompt_text else None,
                     "preview_image": None,
                     "scene_manifest": _repo_path(scene_manifest_path),
                     "stats": manifest["stats"],

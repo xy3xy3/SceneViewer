@@ -1,5 +1,7 @@
 export const REPO_ASSET_PREFIX = "/repo-assets";
 
+const LEGACY_HSM_HSSD_SEGMENT = "/hssd-models/";
+
 function encodePathSegments(relativePath: string): string {
   return relativePath
     .replace(/^\/+/, "")
@@ -8,11 +10,44 @@ function encodePathSegments(relativePath: string): string {
     .join("/");
 }
 
-export function toRepoAssetUrl(relativePath: string | null | undefined): string | null {
-  if (!relativePath) {
+export function normalizeRepoAssetPath(path: string | null | undefined): string | null {
+  if (!path) {
     return null;
   }
-  return `${REPO_ASSET_PREFIX}/${encodePathSegments(relativePath)}`;
+
+  const normalized = path.trim().replace(/\\/g, "/");
+  if (!normalized) {
+    return null;
+  }
+
+  if (
+    normalized.startsWith("assets/") ||
+    normalized.startsWith("./assets/") ||
+    normalized.startsWith("../assets/")
+  ) {
+    return normalized.replace(/^\.\//, "");
+  }
+
+  const legacyHsmIndex = normalized.lastIndexOf(LEGACY_HSM_HSSD_SEGMENT);
+  if (legacyHsmIndex >= 0) {
+    const suffix = normalized.slice(legacyHsmIndex + LEGACY_HSM_HSSD_SEGMENT.length);
+    return `assets/hsm/hssd-models/${suffix}`.replace(/\/{2,}/g, "/");
+  }
+
+  const embeddedAssetsIndex = normalized.lastIndexOf("/assets/");
+  if (embeddedAssetsIndex >= 0) {
+    return normalized.slice(embeddedAssetsIndex + 1);
+  }
+
+  return normalized.replace(/^\/+/, "");
+}
+
+export function toRepoAssetUrl(relativePath: string | null | undefined): string | null {
+  const normalizedPath = normalizeRepoAssetPath(relativePath);
+  if (!normalizedPath) {
+    return null;
+  }
+  return `${REPO_ASSET_PREFIX}/${encodePathSegments(normalizedPath)}`;
 }
 
 export async function fetchRepoJson<T>(relativePath: string): Promise<T> {

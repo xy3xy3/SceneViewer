@@ -1,0 +1,7 @@
+# SceneViewer configuration
+# Copy this file to config.yml and edit the values.
+
+# Path to an existing HSSD models checkout (containing objects/, stages/, support-surfaces/).
+# This avoids re-downloading HSSD assets when building HSM previews.
+# Can also be set in .env or as a real environment variable.
+# SCENEVIEWER_HSSD_ROOT: /home/user/proj/scenesmith/data/hssd-models

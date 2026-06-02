@@ -55,7 +55,7 @@ from ..hsm import (
     HSM_DATASET_KEY,
     ensure_hsm_hssd_models,
     hsm_hssd_glb_path,
-    repo_relative_path as hsm_repo_relative_path,
+    hsm_repo_relative_path,
     hsm_three_quaternion_from_transform,
 )
 

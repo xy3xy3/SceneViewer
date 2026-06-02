@@ -1,4 +1,14 @@
-import { Suspense, startTransition, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Component,
+  Suspense,
+  startTransition,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ErrorInfo,
+  type ReactNode,
+} from "react";
 import {
   Bounds,
   Edges,
@@ -513,25 +523,142 @@ function AssetModel({
   }
 
   return (
-    <AssetModelContent
-      url={url}
-      position={position}
-      rotationYDeg={rotationYDeg}
-      scale={scale}
-      quaternion={quaternion}
-      onReady={onReady}
-      onBounds={onBounds}
-      materialProfile={materialProfile}
-      opacity={opacity}
-      wireframe={wireframe}
+    <AssetModelErrorBoundary
+      resetKey={url}
+      onError={onReady}
+      fallback={
+        <MissingAssetPlaceholder
+          position={position}
+          rotationYDeg={rotationYDeg}
+          scale={scale}
+          quaternion={quaternion}
+          visible={visible}
+          onBounds={onBounds}
+        />
+      }
+    >
+      <AssetModelContent
+        url={url}
+        position={position}
+        rotationYDeg={rotationYDeg}
+        scale={scale}
+        quaternion={quaternion}
+        onReady={onReady}
+        onBounds={onBounds}
+        materialProfile={materialProfile}
+        opacity={opacity}
+        wireframe={wireframe}
+        visible={visible}
+        doubleSided={doubleSided}
+        transparentDepthWrite={transparentDepthWrite}
+        forceSinglePass={forceSinglePass}
+        polygonOffset={polygonOffset}
+        polygonOffsetFactor={polygonOffsetFactor}
+        polygonOffsetUnits={polygonOffsetUnits}
+      />
+    </AssetModelErrorBoundary>
+  );
+}
+
+class AssetModelErrorBoundary extends Component<
+  {
+    resetKey: string;
+    onError?: () => void;
+    fallback: ReactNode;
+    children: ReactNode;
+  },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  private reported = false;
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+
+  componentDidCatch(_error: Error, _info: ErrorInfo) {
+    if (this.reported) {
+      return;
+    }
+    this.reported = true;
+    this.props.onError?.();
+  }
+
+  componentDidUpdate(prevProps: Readonly<{ resetKey: string }>) {
+    if (prevProps.resetKey === this.props.resetKey || !this.state.hasError) {
+      return;
+    }
+    this.reported = false;
+    this.setState({ hasError: false });
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback;
+    }
+    return this.props.children;
+  }
+}
+
+function MissingAssetPlaceholder({
+  position,
+  rotationYDeg,
+  scale,
+  quaternion,
+  visible = true,
+  onBounds,
+}: {
+  position: Vector3Tuple;
+  rotationYDeg: number;
+  scale: Vector3Tuple;
+  quaternion?: [number, number, number, number] | null;
+  visible?: boolean;
+  onBounds?: (bounds: SceneBounds) => void;
+}) {
+  const placeholderSize = useMemo(
+    () =>
+      [
+        Math.max(Math.abs(scale[0]), 0.24),
+        Math.max(Math.abs(scale[1]), 0.24),
+        Math.max(Math.abs(scale[2]), 0.24),
+      ] as Vector3Tuple,
+    [scale],
+  );
+  const resolvedQuaternion = useMemo(
+    () =>
+      quaternion
+        ? new THREE.Quaternion(quaternion[0], quaternion[1], quaternion[2], quaternion[3])
+        : undefined,
+    [quaternion],
+  );
+
+  useEffect(() => {
+    onBounds?.({
+      center: position,
+      size: placeholderSize,
+    });
+  }, [onBounds, placeholderSize, position]);
+
+  return (
+    <group
       visible={visible}
-      doubleSided={doubleSided}
-      transparentDepthWrite={transparentDepthWrite}
-      forceSinglePass={forceSinglePass}
-      polygonOffset={polygonOffset}
-      polygonOffsetFactor={polygonOffsetFactor}
-      polygonOffsetUnits={polygonOffsetUnits}
-    />
+      position={position}
+      rotation={quaternion ? undefined : [0, THREE.MathUtils.degToRad(rotationYDeg), 0]}
+      quaternion={resolvedQuaternion}
+    >
+      <mesh>
+        <boxGeometry args={placeholderSize} />
+        <meshStandardMaterial
+          color="#f97316"
+          roughness={1}
+          metalness={0}
+          transparent
+          opacity={0.16}
+          wireframe
+        />
+      </mesh>
+    </group>
   );
 }
 
