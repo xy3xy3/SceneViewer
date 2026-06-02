@@ -49,6 +49,22 @@ uv run dataset-downloader preprocess sage
 uv run dataset-downloader renderable sage
 ```
 
+如果你已经知道要拉取的 SAGE 场景 id，也可以直接按 id 下载对应的
+`scenes/<id>.zip`，不必先走随机抽样：
+
+```bash
+uv run dataset-downloader import-sage-remote \
+  20251228_133527_layout_6b049b06 \
+  --build-preview
+```
+
+说明：
+
+- 这个命令会从 `nvidia/SAGE-10k` 下载 `scenes/20251228_133527_layout_6b049b06.zip`。
+- 解压后场景会落到 `assets/sage/source/extracted/20251228_133527_layout_6b049b06/`。
+- `--build-preview` 会顺手刷新 `assets/preprocessed/sage/` 和 `assets/renderable/sage/`。
+- 也可以一次传多个 id；如果你手里是文件名，直接传 `*.zip` 也可以。
+
 以 HSM 数据集为例：
 
 ```bash

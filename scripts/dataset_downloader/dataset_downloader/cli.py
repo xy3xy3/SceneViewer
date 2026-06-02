@@ -36,6 +36,7 @@ from .preprocess import (
     preprocess_scenesmith_dataset,
     write_dataset_catalog,
 )
+from .remote_sage import import_remote_sage_scenes
 from .renderable import (
     build_3dfront_renderables,
     build_hssd_renderables,
@@ -322,6 +323,39 @@ def main() -> None:
         action="store_true",
         help="Also refresh SceneWeaver preprocessed and renderable assets after import.",
     )
+    import_sage_parser = subparsers.add_parser(
+        "import-sage-remote",
+        help="Download specific SAGE scene archives from Hugging Face by exact scene id.",
+    )
+    import_sage_parser.add_argument(
+        "scene_ids",
+        nargs="+",
+        help=(
+            "One or more SAGE scene ids, for example `20251228_133527_layout_6b049b06`. "
+            "Passing `*.zip` names is also accepted."
+        ),
+    )
+    import_sage_parser.add_argument(
+        "--destination",
+        type=Path,
+        default=DATASETS["sage"].destination_root,
+        help="Target SAGE dataset root. Defaults to assets/sage.",
+    )
+    import_sage_parser.add_argument(
+        "--force-download",
+        action="store_true",
+        help="Force re-download even when the archive already exists locally.",
+    )
+    import_sage_parser.add_argument(
+        "--force-extract",
+        action="store_true",
+        help="Delete an existing extracted scene directory and unpack the archive again.",
+    )
+    import_sage_parser.add_argument(
+        "--build-preview",
+        action="store_true",
+        help="Also refresh SAGE preprocessed and renderable assets after import.",
+    )
     import_hssd_parser = subparsers.add_parser(
         "import-hssd-local",
         help="Import a local HSSD stage dataset into assets/hssd/source/extracted/.",
@@ -400,6 +434,16 @@ def main() -> None:
             destination_root=args.destination,
             mode=args.mode,
             force=replace_existing,
+            build_preview=args.build_preview,
+        )
+        print(json.dumps(payload, indent=2))
+        return
+    if args.command == "import-sage-remote":
+        payload = import_remote_sage_scenes(
+            scene_ids=args.scene_ids,
+            destination_root=args.destination,
+            force_download=args.force_download,
+            force_extract=args.force_extract,
             build_preview=args.build_preview,
         )
         print(json.dumps(payload, indent=2))

@@ -2,6 +2,28 @@ from __future__ import annotations
 
 from .common import *
 
+def _sage_point_to_three(point: dict[str, object] | None) -> dict[str, float] | None:
+    if not isinstance(point, dict):
+        return None
+    x = point.get("x")
+    y = point.get("y")
+    z = point.get("z", 0.0)
+    if not isinstance(x, (int, float)) or not isinstance(y, (int, float)) or not isinstance(z, (int, float)):
+        return None
+    return {
+        "x": float(x),
+        "y": float(-y),
+        "z": float(z),
+    }
+
+
+def _sage_wall_to_three(wall: dict[str, object]) -> dict[str, object]:
+    converted = dict(wall)
+    converted["start_point"] = _sage_point_to_three(wall.get("start_point"))
+    converted["end_point"] = _sage_point_to_three(wall.get("end_point"))
+    return converted
+
+
 def _write_sage_glb(
     *,
     output_path: Path,
@@ -133,21 +155,56 @@ def _write_sage_glb(
     output_path.write_bytes(b"".join(gltf.save_to_bytes()))
 
 
-def _build_textured_sage_asset(
+def _sage_rotation_matrix_xyz(rotation: dict[str, object] | None) -> np.ndarray:
+    if not isinstance(rotation, dict):
+        return np.identity(3, dtype=np.float32)
+
+    rx = math.radians(float(rotation.get("x") or 0.0))
+    ry = math.radians(float(rotation.get("y") or 0.0))
+    rz = math.radians(float(rotation.get("z") or 0.0))
+
+    cx, sx = math.cos(rx), math.sin(rx)
+    cy, sy = math.cos(ry), math.sin(ry)
+    cz, sz = math.cos(rz), math.sin(rz)
+
+    rotation_x = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, cx, -sx],
+            [0.0, sx, cx],
+        ],
+        dtype=np.float32,
+    )
+    rotation_y = np.array(
+        [
+            [cy, 0.0, sy],
+            [0.0, 1.0, 0.0],
+            [-sy, 0.0, cy],
+        ],
+        dtype=np.float32,
+    )
+    rotation_z = np.array(
+        [
+            [cz, -sz, 0.0],
+            [sz, cz, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+    return rotation_z @ rotation_y @ rotation_x
+
+
+def _load_sage_source_asset(
     *,
     ply_path: Path,
     texture_path: Path | None,
-    output_path: Path,
 ) -> dict[str, object]:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
     ply = PlyData.read(ply_path.open("rb"))
     vertex_data = ply["vertex"].data
     x = np.asarray(vertex_data["x"], dtype=np.float32)
     y = np.asarray(vertex_data["y"], dtype=np.float32)
     z = np.asarray(vertex_data["z"], dtype=np.float32)
-    source_vertices = np.column_stack((x, y, z))
-    vertices = _sage_vertices_to_three(source_vertices)
+    source_vertices = np.column_stack((x, y, z)).astype(np.float32)
 
     texcoord_element = ply["texcoord"].data if "texcoord" in ply else None
     uv_lookup = None
@@ -177,7 +234,7 @@ def _build_textured_sage_asset(
                 key = (vertex_index, texcoord_index)
                 if key not in unique_lookup:
                     unique_lookup[key] = len(unique_vertices)
-                    unique_vertices.append(vertices[vertex_index].tolist())
+                    unique_vertices.append(source_vertices[vertex_index].tolist())
                     if uv_lookup is not None and texcoord_index >= 0:
                         unique_uvs.append(uv_lookup[texcoord_index].tolist())
                     else:
@@ -188,39 +245,70 @@ def _build_textured_sage_asset(
     vertices_array = np.asarray(unique_vertices, dtype=np.float32)
     faces_array = np.asarray(faces, dtype=np.uint32)
     uv_array = np.asarray(unique_uvs, dtype=np.float32)
-    normals_array = _compute_vertex_normals(vertices_array, faces_array.astype(np.int64))
 
     texture_image = None
     if texture_path and texture_path.exists():
         texture_image = Image.open(texture_path).convert("RGB")
 
-    min_corner = vertices_array.min(axis=0)
-    max_corner = vertices_array.max(axis=0)
-    size = (max_corner - min_corner).tolist()
-    origin_offset = np.array(
+    return {
+        "source_vertices": vertices_array,
+        "uvs": uv_array,
+        "faces": faces_array,
+        "texture_image": texture_image,
+        "source_vertex_count": int(vertices_array.shape[0]),
+        "triangle_count": int(len(faces)),
+        "textured": texture_image is not None,
+    }
+
+
+def _build_textured_sage_world_asset(
+    *,
+    source_asset: dict[str, object],
+    object_position: dict[str, object] | None,
+    object_rotation: dict[str, object] | None,
+    output_path: Path,
+) -> dict[str, object]:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    source_vertices = np.asarray(source_asset["source_vertices"], dtype=np.float32)
+    rotation = _sage_rotation_matrix_xyz(object_rotation)
+    translation = np.array(
         [
-            (min_corner[0] + max_corner[0]) / 2.0,
-            min_corner[1],
-            (min_corner[2] + max_corner[2]) / 2.0,
+            float((object_position or {}).get("x") or 0.0),
+            float((object_position or {}).get("y") or 0.0),
+            float((object_position or {}).get("z") or 0.0),
         ],
         dtype=np.float32,
     )
-    centered_vertices = vertices_array - origin_offset
+    transformed_source_vertices = source_vertices @ rotation.T + translation
+    transformed_three_vertices = _sage_vertices_to_three(transformed_source_vertices)
+
+    min_corner = transformed_three_vertices.min(axis=0)
+    max_corner = transformed_three_vertices.max(axis=0)
+    size = (max_corner - min_corner).astype(np.float32)
+    center = ((min_corner + max_corner) / 2.0).astype(np.float32)
+    centered_vertices = transformed_three_vertices - center
+    normals_array = _compute_vertex_normals(
+        centered_vertices,
+        np.asarray(source_asset["faces"], dtype=np.uint32).astype(np.int64),
+    )
+
     _write_sage_glb(
         output_path=output_path,
         vertices=centered_vertices,
         normals=normals_array,
-        uvs=uv_array,
-        faces=faces_array,
-        texture_image=texture_image,
+        uvs=np.asarray(source_asset["uvs"], dtype=np.float32),
+        faces=np.asarray(source_asset["faces"], dtype=np.uint32),
+        texture_image=source_asset.get("texture_image"),
     )
 
     return {
         "asset_path": _repo_path(output_path),
-        "native_size": [float(value) for value in size],
-        "source_vertex_count": int(source_vertices.shape[0]),
-        "triangle_count": int(len(faces)),
-        "textured": texture_image is not None,
+        "native_size": [float(value) for value in size.tolist()],
+        "world_center": [float(value) for value in center.tolist()],
+        "source_vertex_count": int(source_asset["source_vertex_count"]),
+        "triangle_count": int(source_asset["triangle_count"]),
+        "textured": bool(source_asset.get("textured")),
     }
 
 
@@ -238,10 +326,7 @@ def build_sage_renderables(scene_limit: int | None = None) -> dict[str, object]:
     output_root.mkdir(parents=True, exist_ok=True)
 
     source_index = _read_json(source_index_path)
-    shared_dir = output_root / "shared"
-    shared_dir.mkdir(parents=True, exist_ok=True)
-
-    shared_assets: dict[str, dict[str, object]] = {}
+    shared_sources: dict[str, dict[str, object]] = {}
     scenes: list[dict[str, object]] = []
 
     scene_summaries = list(source_index.get("scenes", []))
@@ -252,7 +337,7 @@ def build_sage_renderables(scene_limit: int | None = None) -> dict[str, object]:
         scenes=scenes,
         source_scene_count=len(scene_summaries),
         status="in_progress",
-        shared_asset_count=len(shared_assets),
+        shared_asset_count=len(shared_sources),
     )
     progress = _scene_progress(dataset, scene_summaries)
     for scene_summary in progress:
@@ -262,6 +347,8 @@ def build_sage_renderables(scene_limit: int | None = None) -> dict[str, object]:
         scene_manifest = _read_json(scene_manifest_path)
         scene_id = scene_manifest["scene_id"]
         scene_dir = REPO_ROOT / scene_manifest["source"]["extracted_dir"]
+        scene_output_dir = _sage_renderable_scene_output(scene_id)
+        object_output_dir = scene_output_dir / "objects"
 
         renderable_objects: list[dict[str, object]] = []
         for obj in scene_manifest["normalized"]["objects"]:
@@ -271,35 +358,29 @@ def build_sage_renderables(scene_limit: int | None = None) -> dict[str, object]:
             if not source_id or not ply_repo_path:
                 continue
 
-            if source_id not in shared_assets:
+            if source_id not in shared_sources:
                 ply_path = REPO_ROOT / ply_repo_path
                 texture_repo_path = mesh_info.get("texture")
                 texture_path = REPO_ROOT / texture_repo_path if texture_repo_path else None
-                shared_assets[source_id] = _build_textured_sage_asset(
+                shared_sources[source_id] = _load_sage_source_asset(
                     ply_path=ply_path,
                     texture_path=texture_path,
-                    output_path=shared_dir / f"{source_id}.glb",
                 )
 
-            asset_meta = shared_assets[source_id]
-            dimensions = obj.get("dimensions") or {}
-            native_size = asset_meta["native_size"]
+            asset_meta = _build_textured_sage_world_asset(
+                source_asset=shared_sources[source_id],
+                object_position=obj.get("position"),
+                object_rotation=obj.get("rotation"),
+                output_path=object_output_dir / f"{obj['id']}.glb",
+            )
             renderable_objects.append(
                 {
                     "id": obj["id"],
                     "asset_path": asset_meta["asset_path"],
-                    "position": [
-                        float(obj["position"]["x"]),
-                        float(obj["position"].get("z", 0.0)),
-                        float(obj["position"]["y"]),
-                    ],
-                    "rotation_y_deg": float(-(obj.get("rotation") or {}).get("z", 0.0)),
-                    "scale": [
-                        _safe_scale(dimensions.get("width"), native_size[0]),
-                        _safe_scale(dimensions.get("height"), native_size[1]),
-                        _safe_scale(dimensions.get("length"), native_size[2]),
-                    ],
-                    "native_size": native_size,
+                    "position": asset_meta["world_center"],
+                    "rotation_y_deg": 0.0,
+                    "scale": [1.0, 1.0, 1.0],
+                    "native_size": asset_meta["native_size"],
                     "description": obj.get("description"),
                     "type": obj.get("type"),
                     "source_id": source_id,
@@ -309,7 +390,7 @@ def build_sage_renderables(scene_limit: int | None = None) -> dict[str, object]:
         renderable_rooms: list[dict[str, object]] = []
         for room in scene_manifest["normalized"]["rooms"]:
             wall_texture = None
-            walls = room.get("walls") or []
+            walls = [_sage_wall_to_three(wall) for wall in (room.get("walls") or [])]
             if walls:
                 wall_texture = _renderable_room_material(
                     scene_dir,
@@ -336,7 +417,7 @@ def build_sage_renderables(scene_limit: int | None = None) -> dict[str, object]:
                     "ceiling_height": room.get("ceiling_height"),
                     "floor_texture_path": _renderable_room_material(scene_dir, room.get("floor_material")),
                     "wall_texture_path": wall_texture,
-                    "walls": room.get("walls") or [],
+                    "walls": walls,
                     "doors": door_renderables,
                     "windows": room.get("windows") or [],
                 }
@@ -352,8 +433,7 @@ def build_sage_renderables(scene_limit: int | None = None) -> dict[str, object]:
             "objects": renderable_objects,
             "rooms": renderable_rooms,
         }
-        output_dir = _sage_renderable_scene_output(scene_id)
-        render_manifest_path = output_dir / "scene.json"
+        render_manifest_path = scene_output_dir / "scene.json"
         _write_json(render_manifest_path, render_manifest)
         scenes.append(
             {
@@ -369,7 +449,7 @@ def build_sage_renderables(scene_limit: int | None = None) -> dict[str, object]:
             scenes=scenes,
             source_scene_count=len(scene_summaries),
             status="in_progress",
-            shared_asset_count=len(shared_assets),
+            shared_asset_count=len(shared_sources),
         )
 
     return _write_renderable_progress(
@@ -377,6 +457,5 @@ def build_sage_renderables(scene_limit: int | None = None) -> dict[str, object]:
         scenes=scenes,
         source_scene_count=len(scene_summaries),
         status="ready",
-        shared_asset_count=len(shared_assets),
+        shared_asset_count=len(shared_sources),
     )
-

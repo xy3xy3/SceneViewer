@@ -231,6 +231,47 @@ uv run dataset-downloader renderable sage
 
 - `assets/renderable/sage/`
 
+### 5. 按指定 scene id 直接导入
+
+如果你已经在 Hugging Face 页面里确认了目标 SAGE scene id，例如：
+
+```text
+20251228_133527_layout_6b049b06
+```
+
+可以直接下载对应的 `scenes/<id>.zip` 并可选刷新预览资产：
+
+```bash
+uv run dataset-downloader import-sage-remote \
+  20251228_133527_layout_6b049b06 \
+  --build-preview
+```
+
+这个命令会：
+
+- 从 `nvidia/SAGE-10k` 下载 `scenes/20251228_133527_layout_6b049b06.zip`。
+- 解压到 `assets/sage/source/extracted/20251228_133527_layout_6b049b06/`。
+- 如果带了 `--build-preview`，自动执行 `preprocess sage` 和 `renderable sage`。
+
+常用参数：
+
+```bash
+# 一次导入多个 scene id
+uv run dataset-downloader import-sage-remote \
+  20251228_133527_layout_6b049b06 \
+  20251213_020526_layout_84b703fb
+
+# 如果本地已经有 zip，但想强制重新下载
+uv run dataset-downloader import-sage-remote \
+  20251228_133527_layout_6b049b06 \
+  --force-download
+
+# 如果已经解压过，想强制覆盖本地解压目录
+uv run dataset-downloader import-sage-remote \
+  20251228_133527_layout_6b049b06 \
+  --force-extract
+```
+
 ## SceneSmith
 
 如果你手上已经有本机跑出来的 SceneSmith 输出目录，也可以直接导入，不必重新下载官方样例。
