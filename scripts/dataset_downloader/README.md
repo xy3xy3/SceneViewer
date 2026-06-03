@@ -79,6 +79,29 @@ uv sync
 
 用于只处理前 `N` 个场景，方便本地快速联调。
 
+如果你本地导入了很多场景，想把前端里不想继续看到的结果删掉，可以先列出场景，再按 id 删除：
+
+```bash
+# 列出某个数据集当前可管理的本地 scene
+uv run dataset-downloader list-scenes hsm
+uv run dataset-downloader list-scenes scenesmith --subset local-scenesmith-example-data
+
+# 支持按关键字筛选，方便先找目标
+uv run dataset-downloader list-scenes sceneweaver --query bedroom
+
+# 预览将要删除的 scene，不真正删文件
+uv run dataset-downloader remove-scenes hsm scene_12 --dry-run
+
+# 真正删除，并自动重建 preprocess/renderable 索引，让前端不再显示
+uv run dataset-downloader remove-scenes hsm scene_12
+```
+
+说明：
+
+- `remove-scenes` 当前支持 `hsm`、`sage`、`scenesmith`、`sceneweaver`。
+- 可以传 `scene_uid`、`scene_id`，或者 `subset/scene_id`。
+- 如果同一个 `scene_id` 在多个 subset 里重名，命令会拒绝执行，并提示你改用精确的 `scene_uid`。
+
 ## 固定 Seed 以便复现
 
 下载抽样时建议显式指定 `--seed`。这样不同人只要使用同样的参数，就能拿到一致的抽样结果，方便复现问题和对齐测试数据。

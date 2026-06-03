@@ -47,6 +47,11 @@ from .renderable import (
     build_scenesmith_renderables,
     write_renderable_catalog,
 )
+from .scene_inventory import (
+    SCENE_MANAGED_DATASETS,
+    list_local_scenes,
+    remove_local_scenes,
+)
 
 def dataset_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     common = argparse.ArgumentParser(add_help=False)
@@ -155,6 +160,58 @@ def dataset_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParse
         type=int,
         default=None,
         help="Optional maximum number of scenes to convert into renderable assets.",
+    )
+
+    list_scenes_parser = subparsers.add_parser(
+        "list-scenes",
+        help="List local scenes that currently participate in frontend preview indexes.",
+    )
+    list_scenes_parser.add_argument(
+        "dataset",
+        choices=sorted(SCENE_MANAGED_DATASETS),
+        help="Which dataset to inspect.",
+    )
+    list_scenes_parser.add_argument(
+        "--subset",
+        type=str,
+        default=None,
+        help="Optional subset filter for datasets like SceneSmith or SceneWeaver.",
+    )
+    list_scenes_parser.add_argument(
+        "--query",
+        type=str,
+        default=None,
+        help="Optional substring filter matched against scene_id, scene_uid, title, and description.",
+    )
+
+    remove_scenes_parser = subparsers.add_parser(
+        "remove-scenes",
+        help="Delete selected local scenes and rebuild preview indexes so they disappear from the frontend.",
+    )
+    remove_scenes_parser.add_argument(
+        "dataset",
+        choices=sorted(SCENE_MANAGED_DATASETS),
+        help="Which dataset to prune.",
+    )
+    remove_scenes_parser.add_argument(
+        "scene_refs",
+        nargs="+",
+        help=(
+            "One or more exact scene references. "
+            "Accepts scene_uid, scene_id, or subset/scene_id. "
+            "When scene_id is ambiguous, use scene_uid."
+        ),
+    )
+    remove_scenes_parser.add_argument(
+        "--subset",
+        type=str,
+        default=None,
+        help="Optional subset filter to narrow scene_id matches.",
+    )
+    remove_scenes_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show which scenes would be removed without deleting files or rebuilding indexes.",
     )
 
     hsm_hssd_parser = subparsers.add_parser(
@@ -528,6 +585,23 @@ def main() -> None:
             sync_habitat_metadata=not args.skip_habitat_metadata,
             metadata_force_download=args.force_habitat_metadata_download,
             metadata_max_workers=args.metadata_max_workers,
+        )
+        print(json.dumps(payload, indent=2))
+        return
+    if args.command == "list-scenes":
+        payload = list_local_scenes(
+            dataset=args.dataset,
+            subset=args.subset,
+            query=args.query,
+        )
+        print(json.dumps(payload, indent=2))
+        return
+    if args.command == "remove-scenes":
+        payload = remove_local_scenes(
+            dataset=args.dataset,
+            scene_refs=args.scene_refs,
+            subset=args.subset,
+            dry_run=args.dry_run,
         )
         print(json.dumps(payload, indent=2))
         return
