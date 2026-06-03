@@ -5,6 +5,7 @@ import {
   Bounds,
   type AssetPlacement,
   type InspectableObject,
+  type QuaternionTuple,
   type RenderProgressSnapshot,
   type SceneBounds,
   type Vector3Tuple,
@@ -19,6 +20,8 @@ import {
   finalizeBounds,
   labelText,
   resolveObjectPosition,
+  resolveObjectQuaternion,
+  resolveObjectRotation,
   updateMeasuredBoundsMap,
 } from "./shared";
 
@@ -112,6 +115,8 @@ function computeSceneWeaverBounds(
 function buildWholeSceneObjectAssets(
   renderScene: RenderableWholeSceneGlbSceneManifest,
   positionOverrides?: Record<string, Vector3Tuple>,
+  rotationOverrides?: Record<string, number>,
+  quaternionOverrides?: Record<string, QuaternionTuple>,
 ): AssetPlacement[] {
   return renderScene.objects
     .filter((object) => Boolean(object.asset_path))
@@ -120,8 +125,8 @@ function buildWholeSceneObjectAssets(
         key: object.id,
         assetPath: object.asset_path!,
         position: resolveObjectPosition(object.id, object.position, positionOverrides),
-        rotationYDeg: object.rotation_y_deg,
-        quaternion: object.quaternion,
+        rotationYDeg: resolveObjectRotation(object.id, object.rotation_y_deg, rotationOverrides),
+        quaternion: resolveObjectQuaternion(object.id, object.quaternion, quaternionOverrides),
         scale: object.scale ?? [1, 1, 1],
       }),
     );
@@ -133,6 +138,8 @@ export function SceneWeaverPreviewContent({
   selectedObjectId,
   onSelectedObjectChange,
   objectPositionOverrides,
+  objectRotationOverrides,
+  objectQuaternionOverrides,
   onRenderProgressChange,
 }: {
   renderScene: RenderableWholeSceneGlbSceneManifest;
@@ -140,6 +147,8 @@ export function SceneWeaverPreviewContent({
   selectedObjectId: string | null;
   onSelectedObjectChange: (id: string | null) => void;
   objectPositionOverrides?: Record<string, Vector3Tuple>;
+  objectRotationOverrides?: Record<string, number>;
+  objectQuaternionOverrides?: Record<string, QuaternionTuple>;
   onRenderProgressChange: (snapshot: RenderProgressSnapshot) => void;
 }) {
   const [hoveredObjectId, setHoveredObjectId] = useState<string | null>(null);
@@ -159,8 +168,14 @@ export function SceneWeaverPreviewContent({
     [renderScene.scene_glb, renderScene.scene_uid],
   );
   const objectAssets = useMemo(
-    () => buildWholeSceneObjectAssets(renderScene, objectPositionOverrides),
-    [objectPositionOverrides, renderScene],
+    () =>
+      buildWholeSceneObjectAssets(
+        renderScene,
+        objectPositionOverrides,
+        objectRotationOverrides,
+        objectQuaternionOverrides,
+      ),
+    [objectPositionOverrides, objectQuaternionOverrides, objectRotationOverrides, renderScene],
   );
   const [sceneBatchProgress, setSceneBatchProgress] = useState(() =>
     createEmptyBatchProgress(sceneAssets.length),

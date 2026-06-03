@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as THREE from "three";
 import {
   Boxes,
   Check,
@@ -19,7 +20,11 @@ import {
   ScenePreviewProgressIndicator,
   type ScenePreviewProgressSnapshot,
 } from "./components/ScenePreviewCanvas";
-import type { Vector3Tuple } from "./components/scenePreview/shared";
+import {
+  normalizeQuaternionTuple,
+  type QuaternionTuple,
+  type Vector3Tuple,
+} from "./components/scenePreview/shared";
 import { fetchRepoJson, toRepoAssetUrl } from "./lib/repoAssets";
 import type {
   DatasetCatalog,
@@ -37,12 +42,18 @@ import "./index.css";
 
 type WallDisplayMode = "solid" | "transparent" | "hidden" | "wireframe";
 type DebugAxis = "x" | "y" | "z";
+type QuaternionAxis = "x" | "y" | "z" | "w";
 type CoordinateDraft = Record<DebugAxis, string>;
+type EulerDraft = Record<DebugAxis, string>;
+type QuaternionDraft = Record<QuaternionAxis, string>;
+type RotationInputSource = "euler" | "quaternion" | null;
 
 type RenderableDebugObject = {
   id: string;
   label: string;
   originalPosition: Vector3Tuple;
+  originalQuaternion: QuaternionTuple;
+  originalRotationYDeg: number;
   sourceId?: string | null;
 };
 
@@ -51,6 +62,9 @@ const DEBUG_AXES: Array<{ axis: DebugAxis; index: 0 | 1 | 2 }> = [
   { axis: "y", index: 1 },
   { axis: "z", index: 2 },
 ];
+
+const QUATERNION_AXES: QuaternionAxis[] = ["x", "y", "z", "w"];
+const EULER_ORDER = "XYZ";
 
 function formatDatasetLabel(dataset: string): string {
   if (dataset === "hsm") {
@@ -161,8 +175,112 @@ function formatVector(value: Vector3Tuple): string {
   return `${formatCoordinate(value[0])}, ${formatCoordinate(value[1])}, ${formatCoordinate(value[2])}`;
 }
 
+function formatQuaternion(value: QuaternionTuple): string {
+  return value.map((entry) => formatCoordinate(entry)).join(", ");
+}
+
 function positionsEqual(left: Vector3Tuple, right: Vector3Tuple, epsilon = 0.0001): boolean {
   return left.every((value, index) => Math.abs(value - right[index]) <= epsilon);
+}
+
+function quaternionFromRotationYDeg(rotationYDeg: number): QuaternionTuple {
+  const halfRadians = THREE.MathUtils.degToRad(rotationYDeg) / 2;
+  return [0, Math.sin(halfRadians), 0, Math.cos(halfRadians)];
+}
+
+function resolveDebugQuaternion(
+  quaternion: QuaternionTuple | null | undefined,
+  rotationYDeg: number,
+): QuaternionTuple {
+  if (quaternion) {
+    const normalized = normalizeQuaternionTuple(quaternion);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return quaternionFromRotationYDeg(rotationYDeg);
+}
+
+function quaternionToRotationYDeg(quaternion: QuaternionTuple): number {
+  return quaternionToEulerDeg(quaternion)[1];
+}
+
+function quaternionToEulerDeg(quaternion: QuaternionTuple): Vector3Tuple {
+  const normalized = normalizeQuaternionTuple(quaternion) ?? quaternionFromRotationYDeg(0);
+  const euler = new THREE.Euler().setFromQuaternion(
+    new THREE.Quaternion(normalized[0], normalized[1], normalized[2], normalized[3]),
+    EULER_ORDER,
+  );
+  return [
+    THREE.MathUtils.radToDeg(euler.x),
+    THREE.MathUtils.radToDeg(euler.y),
+    THREE.MathUtils.radToDeg(euler.z),
+  ];
+}
+
+function eulerDegToQuaternion(eulerDeg: Vector3Tuple): QuaternionTuple {
+  const euler = new THREE.Euler(
+    THREE.MathUtils.degToRad(eulerDeg[0]),
+    THREE.MathUtils.degToRad(eulerDeg[1]),
+    THREE.MathUtils.degToRad(eulerDeg[2]),
+    EULER_ORDER,
+  );
+  const quaternion = new THREE.Quaternion().setFromEuler(euler);
+  return [quaternion.x, quaternion.y, quaternion.z, quaternion.w];
+}
+
+function quaternionsEqual(
+  left: QuaternionTuple,
+  right: QuaternionTuple,
+  epsilon = 0.0001,
+): boolean {
+  const normalizedLeft = normalizeQuaternionTuple(left);
+  const normalizedRight = normalizeQuaternionTuple(right);
+  if (!normalizedLeft || !normalizedRight) {
+    return false;
+  }
+
+  const sameOrientation =
+    normalizedLeft.every((value, index) => Math.abs(value - normalizedRight[index]) <= epsilon) ||
+    normalizedLeft.every((value, index) => Math.abs(value + normalizedRight[index]) <= epsilon);
+
+  return sameOrientation;
+}
+
+function quaternionDraftFromValue(value: QuaternionTuple): QuaternionDraft {
+  return {
+    x: formatCoordinateInput(value[0]),
+    y: formatCoordinateInput(value[1]),
+    z: formatCoordinateInput(value[2]),
+    w: formatCoordinateInput(value[3]),
+  };
+}
+
+function parseQuaternionDraft(value: QuaternionDraft): QuaternionTuple | null {
+  const parsed = [Number(value.x), Number(value.y), Number(value.z), Number(value.w)] as QuaternionTuple;
+  if (parsed.some((entry) => !Number.isFinite(entry))) {
+    return null;
+  }
+
+  return normalizeQuaternionTuple(parsed);
+}
+
+function eulerDraftFromValue(value: Vector3Tuple): EulerDraft {
+  return {
+    x: formatCoordinateInput(value[0]),
+    y: formatCoordinateInput(value[1]),
+    z: formatCoordinateInput(value[2]),
+  };
+}
+
+function parseEulerDraft(value: EulerDraft): Vector3Tuple | null {
+  const parsed = [Number(value.x), Number(value.y), Number(value.z)] as Vector3Tuple;
+  if (parsed.some((entry) => !Number.isFinite(entry))) {
+    return null;
+  }
+
+  return parsed;
 }
 
 function buildRenderableDebugObjects(
@@ -181,6 +299,8 @@ function buildRenderableDebugObjects(
         id: object.id,
         label: object.type || object.description || object.source_id || object.id,
         originalPosition: object.position,
+        originalQuaternion: quaternionFromRotationYDeg(object.rotation_y_deg),
+        originalRotationYDeg: object.rotation_y_deg,
         sourceId: object.source_id,
       }));
     case "hsm":
@@ -195,6 +315,8 @@ function buildRenderableDebugObjects(
           object.source_id ||
           object.id,
         originalPosition: object.position,
+        originalQuaternion: resolveDebugQuaternion(object.quaternion, object.rotation_y_deg),
+        originalRotationYDeg: object.rotation_y_deg,
         sourceId: object.source_id,
       }));
     case "scenesmith":
@@ -210,6 +332,8 @@ function buildRenderableDebugObjects(
             object.description ||
             object.id,
           originalPosition: object.position,
+          originalQuaternion: resolveDebugQuaternion(object.quaternion, object.rotation_y_deg),
+          originalRotationYDeg: object.rotation_y_deg,
         };
       });
     case "3dfront":
@@ -226,6 +350,8 @@ function buildRenderableDebugObjects(
             object.source_ref ||
             object.id,
           originalPosition: object.position,
+          originalQuaternion: resolveDebugQuaternion(object.quaternion, object.rotation_y_deg),
+          originalRotationYDeg: object.rotation_y_deg,
           sourceId: object.source_model_jid ?? object.source_ref,
         };
       });
@@ -235,6 +361,8 @@ function buildRenderableDebugObjects(
         id: object.id,
         label: object.object_type || object.description || object.source_id || object.id,
         originalPosition: object.position,
+        originalQuaternion: resolveDebugQuaternion(object.quaternion, object.rotation_y_deg),
+        originalRotationYDeg: object.rotation_y_deg,
         sourceId: object.source_id,
       }));
   }
@@ -279,8 +407,15 @@ export default function App() {
   const [objectPositionOverrides, setObjectPositionOverrides] = useState<
     Record<string, Vector3Tuple>
   >({});
+  const [objectQuaternionOverrides, setObjectQuaternionOverrides] = useState<
+    Record<string, QuaternionTuple>
+  >({});
   const [pointerDebug, setPointerDebug] = useState<ScenePointerDebugSnapshot | null>(null);
   const [positionDraft, setPositionDraft] = useState<CoordinateDraft | null>(null);
+  const [eulerDraft, setEulerDraft] = useState<EulerDraft | null>(null);
+  const [quaternionDraft, setQuaternionDraft] = useState<QuaternionDraft | null>(null);
+  const previousSelectedObjectIdRef = useRef<string | null>(null);
+  const rotationInputSourceRef = useRef<RotationInputSource>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [previewProgress, setPreviewProgress] = useState<ScenePreviewProgressSnapshot | null>(
     null,
@@ -514,14 +649,21 @@ export default function App() {
     }
 
     const overridePosition = objectPositionOverrides[selectedObject.id];
+    const overrideQuaternion = objectQuaternionOverrides[selectedObject.id];
+    const currentQuaternion = overrideQuaternion ?? selectedObject.originalQuaternion;
     return {
       id: selectedObject.id,
       label: selectedObject.label,
       originalPosition: selectedObject.originalPosition,
       currentPosition: overridePosition ?? selectedObject.originalPosition,
+      originalQuaternion: selectedObject.originalQuaternion,
+      currentQuaternion,
+      originalRotationYDeg: quaternionToRotationYDeg(selectedObject.originalQuaternion),
+      currentRotationYDeg: quaternionToRotationYDeg(currentQuaternion),
+      hasRotationOverride: overrideQuaternion !== undefined,
       hasOverride: Boolean(overridePosition),
     };
-  }, [objectPositionOverrides, renderableDebugObjectMap, selectedObjectId]);
+  }, [objectPositionOverrides, objectQuaternionOverrides, renderableDebugObjectMap, selectedObjectId]);
   const selectedObjectDelta = selectedObjectDebugInfo
     ? ([
         selectedObjectDebugInfo.currentPosition[0] - selectedObjectDebugInfo.originalPosition[0],
@@ -530,6 +672,7 @@ export default function App() {
       ] as Vector3Tuple)
     : null;
   const hasPositionOverrides = Object.keys(objectPositionOverrides).length > 0;
+  const hasRotationOverrides = Object.keys(objectQuaternionOverrides).length > 0;
 
   useEffect(() => {
     if (copyState === "idle") {
@@ -543,8 +686,13 @@ export default function App() {
   useEffect(() => {
     setSelectedObjectId(null);
     setObjectPositionOverrides({});
+    setObjectQuaternionOverrides({});
     setPointerDebug(null);
     setPositionDraft(null);
+    setEulerDraft(null);
+    setQuaternionDraft(null);
+    previousSelectedObjectIdRef.current = null;
+    rotationInputSourceRef.current = null;
   }, [selectedSceneUid]);
 
   useEffect(() => {
@@ -557,6 +705,10 @@ export default function App() {
   useEffect(() => {
     if (!selectedObjectDebugInfo) {
       setPositionDraft(null);
+      setEulerDraft(null);
+      setQuaternionDraft(null);
+      previousSelectedObjectIdRef.current = null;
+      rotationInputSourceRef.current = null;
       return;
     }
 
@@ -565,11 +717,35 @@ export default function App() {
       y: formatCoordinateInput(selectedObjectDebugInfo.currentPosition[1]),
       z: formatCoordinateInput(selectedObjectDebugInfo.currentPosition[2]),
     });
+
+    const nextEulerDraft = eulerDraftFromValue(
+      quaternionToEulerDeg(selectedObjectDebugInfo.currentQuaternion),
+    );
+    const nextQuaternionDraft = quaternionDraftFromValue(selectedObjectDebugInfo.currentQuaternion);
+    const selectedObjectChanged = previousSelectedObjectIdRef.current !== selectedObjectDebugInfo.id;
+
+    if (selectedObjectChanged) {
+      previousSelectedObjectIdRef.current = selectedObjectDebugInfo.id;
+      setEulerDraft(nextEulerDraft);
+      setQuaternionDraft(nextQuaternionDraft);
+      rotationInputSourceRef.current = null;
+      return;
+    }
+
+    setQuaternionDraft(nextQuaternionDraft);
+    if (rotationInputSourceRef.current !== "euler") {
+      setEulerDraft(nextEulerDraft);
+    }
+    rotationInputSourceRef.current = null;
   }, [
     selectedObjectDebugInfo?.id,
     selectedObjectDebugInfo?.currentPosition[0],
     selectedObjectDebugInfo?.currentPosition[1],
     selectedObjectDebugInfo?.currentPosition[2],
+    selectedObjectDebugInfo?.currentQuaternion[0],
+    selectedObjectDebugInfo?.currentQuaternion[1],
+    selectedObjectDebugInfo?.currentQuaternion[2],
+    selectedObjectDebugInfo?.currentQuaternion[3],
   ]);
 
   useEffect(() => {
@@ -697,6 +873,149 @@ export default function App() {
 
   const handleResetAllObjectPositions = useCallback(() => {
     setObjectPositionOverrides({});
+  }, []);
+
+  const updateSelectedObjectQuaternion = useCallback(
+    (objectId: string, nextQuaternion: QuaternionTuple) => {
+      const sourceObject = renderableDebugObjectMap.get(objectId);
+      if (!sourceObject) {
+        return;
+      }
+
+      const normalized = normalizeQuaternionTuple(nextQuaternion);
+      if (!normalized) {
+        return;
+      }
+
+      setObjectQuaternionOverrides((current) => {
+        if (quaternionsEqual(sourceObject.originalQuaternion, normalized)) {
+          if (!(objectId in current)) {
+            return current;
+          }
+
+          const next = { ...current };
+          delete next[objectId];
+          return next;
+        }
+
+        return {
+          ...current,
+          [objectId]: normalized,
+        };
+      });
+    },
+    [renderableDebugObjectMap],
+  );
+
+  const handleQuaternionDraftChange = useCallback(
+    (axis: QuaternionAxis, value: string) => {
+      if (!selectedObjectDebugInfo) {
+        return;
+      }
+
+      rotationInputSourceRef.current = "quaternion";
+      const nextDraft = {
+        ...(quaternionDraft ?? quaternionDraftFromValue(selectedObjectDebugInfo.currentQuaternion)),
+        [axis]: value,
+      };
+      setQuaternionDraft(nextDraft);
+
+      const parsed = parseQuaternionDraft(nextDraft);
+      if (!parsed) {
+        return;
+      }
+
+      updateSelectedObjectQuaternion(selectedObjectDebugInfo.id, parsed);
+    },
+    [quaternionDraft, selectedObjectDebugInfo, updateSelectedObjectQuaternion],
+  );
+
+  const handleEulerDraftChange = useCallback(
+    (axis: DebugAxis, value: string) => {
+      if (!selectedObjectDebugInfo) {
+        return;
+      }
+
+      rotationInputSourceRef.current = "euler";
+      const nextDraft = {
+        ...(eulerDraft ?? eulerDraftFromValue(quaternionToEulerDeg(selectedObjectDebugInfo.currentQuaternion))),
+        [axis]: value,
+      };
+      setEulerDraft(nextDraft);
+
+      const parsed = parseEulerDraft(nextDraft);
+      if (!parsed) {
+        return;
+      }
+
+      const nextQuaternion = eulerDegToQuaternion(parsed);
+      setQuaternionDraft(quaternionDraftFromValue(nextQuaternion));
+      updateSelectedObjectQuaternion(
+        selectedObjectDebugInfo.id,
+        nextQuaternion,
+      );
+    },
+    [eulerDraft, selectedObjectDebugInfo, updateSelectedObjectQuaternion],
+  );
+
+  const resetQuaternionDraft = useCallback(() => {
+    if (!selectedObjectDebugInfo) {
+      setQuaternionDraft(null);
+      return;
+    }
+
+    setQuaternionDraft(quaternionDraftFromValue(selectedObjectDebugInfo.currentQuaternion));
+  }, [selectedObjectDebugInfo]);
+
+  const resetEulerDraft = useCallback(() => {
+    if (!selectedObjectDebugInfo) {
+      setEulerDraft(null);
+      return;
+    }
+
+    setEulerDraft(eulerDraftFromValue(quaternionToEulerDeg(selectedObjectDebugInfo.currentQuaternion)));
+  }, [selectedObjectDebugInfo]);
+
+  const handleEulerDraftBlur = useCallback(() => {
+    if (!eulerDraft) {
+      return;
+    }
+
+    const parsed = parseEulerDraft(eulerDraft);
+    if (parsed) {
+      setEulerDraft(eulerDraftFromValue(parsed));
+      return;
+    }
+
+    resetEulerDraft();
+  }, [eulerDraft, resetEulerDraft]);
+
+  const handleQuaternionDraftBlur = useCallback(() => {
+    if (!quaternionDraft) {
+      return;
+    }
+
+    const parsed = parseQuaternionDraft(quaternionDraft);
+    if (parsed) {
+      setQuaternionDraft(quaternionDraftFromValue(parsed));
+      return;
+    }
+
+    resetQuaternionDraft();
+  }, [quaternionDraft, resetQuaternionDraft]);
+
+  const handleResetSelectedObjectRotation = useCallback(() => {
+    if (!selectedObjectDebugInfo) {
+      return;
+    }
+    updateSelectedObjectQuaternion(
+      selectedObjectDebugInfo.id,
+      selectedObjectDebugInfo.originalQuaternion,
+    );
+  }, [selectedObjectDebugInfo, updateSelectedObjectQuaternion]);
+
+  const handleResetAllObjectRotations = useCallback(() => {
+    setObjectQuaternionOverrides({});
   }, []);
 
   function handleSceneStep(direction: -1 | 1) {
@@ -854,6 +1173,7 @@ export default function App() {
             selectedObjectId={selectedObjectId}
             selectedObjectDebugInfo={selectedObjectDebugInfo}
             objectPositionOverrides={objectPositionOverrides}
+            objectQuaternionOverrides={objectQuaternionOverrides}
             onSelectedObjectChange={setSelectedObjectId}
             onPointerDebugChange={handlePointerDebugChange}
             onProgressChange={handlePreviewProgressChange}
@@ -933,7 +1253,9 @@ export default function App() {
                     <p>{selectedObjectDebugInfo.id}</p>
                   </div>
                   <div className="debug-pill">
-                    {selectedObjectDebugInfo.hasOverride ? "Simulated override" : "Original render position"}
+                    {selectedObjectDebugInfo.hasOverride || selectedObjectDebugInfo.hasRotationOverride
+                      ? "Simulated override"
+                      : "Original render position"}
                   </div>
                 </div>
 
@@ -968,6 +1290,65 @@ export default function App() {
                   ))}
                 </div>
 
+                <div className="debug-rotation-section">
+                  <div className="debug-coordinate-list">
+                    <div className="debug-coordinate-row">
+                      <span>Euler {EULER_ORDER} (Resolved)</span>
+                      <code>{formatVector(quaternionToEulerDeg(selectedObjectDebugInfo.currentQuaternion))}</code>
+                    </div>
+                    <div className="debug-coordinate-row">
+                      <span>rotation_xyzw (Original)</span>
+                      <code>{formatQuaternion(selectedObjectDebugInfo.originalQuaternion)}</code>
+                    </div>
+                    <div className="debug-coordinate-row">
+                      <span>rotation_xyzw (Current)</span>
+                      <code>{formatQuaternion(selectedObjectDebugInfo.currentQuaternion)}</code>
+                    </div>
+                    <div className="debug-coordinate-row">
+                      <span>Rotation Y (Derived)</span>
+                      <code>{formatCoordinate(selectedObjectDebugInfo.originalRotationYDeg)}°</code>
+                    </div>
+                    <div className="debug-coordinate-row">
+                      <span>Rotation Y (Current)</span>
+                      <code>{formatCoordinate(selectedObjectDebugInfo.currentRotationYDeg)}°</code>
+                    </div>
+                  </div>
+
+                  <div className="debug-axis-editor">
+                    {DEBUG_AXES.map(({ axis }) => (
+                      <label key={`euler-${axis}`} className="debug-axis-field">
+                        <span>{`Euler ${axis.toUpperCase()}`}</span>
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          step="1"
+                          value={eulerDraft?.[axis] ?? ""}
+                          onChange={(event) => handleEulerDraftChange(axis, event.target.value)}
+                          onBlur={handleEulerDraftBlur}
+                        />
+                      </label>
+                    ))}
+                  </div>
+
+                  <div className="debug-axis-editor debug-axis-editor-quaternion">
+                    {QUATERNION_AXES.map((axis) => (
+                      <label key={axis} className="debug-axis-field">
+                        <span>{axis.toUpperCase()}</span>
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          step="0.01"
+                          value={quaternionDraft?.[axis] ?? ""}
+                          onChange={(event) =>
+                            handleQuaternionDraftChange(axis, event.target.value)
+                          }
+                          onBlur={handleQuaternionDraftBlur}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
                 <div className="debug-actions">
                   <button
                     type="button"
@@ -976,13 +1357,22 @@ export default function App() {
                     disabled={!selectedObjectDebugInfo.hasOverride}
                   >
                     <RotateCcw size={14} />
-                    <span>Reset Object</span>
+                    <span>Reset Position</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="debug-action-button"
+                    onClick={handleResetSelectedObjectRotation}
+                    disabled={!selectedObjectDebugInfo.hasRotationOverride}
+                  >
+                    <RotateCcw size={14} />
+                    <span>Reset Rotation</span>
                   </button>
                   <button
                     type="button"
                     className="debug-action-button debug-action-button-secondary"
-                    onClick={handleResetAllObjectPositions}
-                    disabled={!hasPositionOverrides}
+                    onClick={() => { handleResetAllObjectPositions(); handleResetAllObjectRotations(); }}
+                    disabled={!hasPositionOverrides && !hasRotationOverrides}
                   >
                     <RotateCcw size={14} />
                     <span>Reset All</span>
@@ -990,13 +1380,14 @@ export default function App() {
                 </div>
 
                 <p className="debug-hint">
-                  这些改动只在当前网页会话里生效，用于人类调试，不会写回场景文件。
+                  这些改动只在当前网页会话里生效，用于人类调试，不会写回场景文件。支持修改
+                  <code>position (x/y/z)</code>、<code>Euler {EULER_ORDER}</code> 和 <code>rotation_xyzw</code>。
                 </p>
               </div>
             ) : (
               <p className="long-copy">
-                在左侧 3D 预览里点击任意物体后，这里会显示它的当前坐标，并允许你临时模拟修改
-                <code>x / y / z</code>。
+                在左侧 3D 预览里点击任意物体后，这里会显示它的当前坐标和旋转，并允许你临时模拟修改
+                <code>position (x/y/z)</code>、<code>Euler {EULER_ORDER}</code> 和 <code>rotation_xyzw</code>。
               </p>
             )}
           </section>

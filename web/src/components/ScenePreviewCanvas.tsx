@@ -17,6 +17,7 @@ import {
   LoadingProgressReporter,
   type ProgressStageId,
   PreviewEnvironment,
+  type QuaternionTuple,
   type RenderProgressSnapshot,
   type ResourceProgressSnapshot,
   type Vector3Tuple,
@@ -33,6 +34,8 @@ interface ScenePreviewCanvasProps {
   selectedObjectId: string | null;
   selectedObjectDebugInfo?: ScenePreviewDebugObjectSnapshot | null;
   objectPositionOverrides?: Record<string, Vector3Tuple>;
+  objectRotationOverrides?: Record<string, number>;
+  objectQuaternionOverrides?: Record<string, QuaternionTuple>;
   onSelectedObjectChange?: (id: string | null) => void;
   onPointerDebugChange?: (snapshot: ScenePointerDebugSnapshot | null) => void;
   onProgressChange?: (snapshot: ScenePreviewProgressSnapshot) => void;
@@ -62,6 +65,11 @@ export interface ScenePreviewDebugObjectSnapshot {
   label: string;
   originalPosition: Vector3Tuple;
   currentPosition: Vector3Tuple;
+  originalQuaternion: QuaternionTuple;
+  currentQuaternion: QuaternionTuple;
+  originalRotationYDeg: number;
+  currentRotationYDeg: number;
+  hasRotationOverride: boolean;
   hasOverride: boolean;
 }
 
@@ -204,7 +212,7 @@ function CanvasDebugHud({
         <strong>{selectedObjectDebugInfo?.label || "Nothing selected"}</strong>
         <p>
           {selectedObjectDebugInfo
-            ? `${formatCoordinate(selectedObjectDebugInfo.currentPosition[0])}, ${formatCoordinate(selectedObjectDebugInfo.currentPosition[1])}, ${formatCoordinate(selectedObjectDebugInfo.currentPosition[2])}`
+            ? `Pos ${formatCoordinate(selectedObjectDebugInfo.currentPosition[0])}, ${formatCoordinate(selectedObjectDebugInfo.currentPosition[1])}, ${formatCoordinate(selectedObjectDebugInfo.currentPosition[2])} · RotY ${formatCoordinate(selectedObjectDebugInfo.currentRotationYDeg)}°`
             : "Click an object to inspect and tweak coordinates"}
         </p>
       </div>
@@ -289,6 +297,8 @@ function PreviewContent({
   selectedObjectId,
   onSelectedObjectChange,
   objectPositionOverrides,
+  objectRotationOverrides,
+  objectQuaternionOverrides,
   onRenderProgressChange,
 }: {
   scene: SceneManifest | null;
@@ -299,6 +309,8 @@ function PreviewContent({
   selectedObjectId: string | null;
   onSelectedObjectChange: (id: string | null) => void;
   objectPositionOverrides?: Record<string, Vector3Tuple>;
+  objectRotationOverrides?: Record<string, number>;
+  objectQuaternionOverrides?: Record<string, QuaternionTuple>;
   onRenderProgressChange: (snapshot: RenderProgressSnapshot) => void;
 }) {
   return (
@@ -332,6 +344,8 @@ function PreviewContent({
           selectedObjectId={selectedObjectId}
           onSelectedObjectChange={onSelectedObjectChange}
           objectPositionOverrides={objectPositionOverrides}
+          objectRotationOverrides={objectRotationOverrides}
+          objectQuaternionOverrides={objectQuaternionOverrides}
           onRenderProgressChange={onRenderProgressChange}
         />
       ) : renderScene.dataset === "3dfront" ? (
@@ -344,6 +358,8 @@ function PreviewContent({
           selectedObjectId={selectedObjectId}
           onSelectedObjectChange={onSelectedObjectChange}
           objectPositionOverrides={objectPositionOverrides}
+          objectRotationOverrides={objectRotationOverrides}
+          objectQuaternionOverrides={objectQuaternionOverrides}
           onRenderProgressChange={onRenderProgressChange}
         />
       ) : renderScene.dataset === "sceneweaver" || renderScene.dataset === "hssd" ? (
@@ -354,6 +370,8 @@ function PreviewContent({
           selectedObjectId={selectedObjectId}
           onSelectedObjectChange={onSelectedObjectChange}
           objectPositionOverrides={objectPositionOverrides}
+          objectRotationOverrides={objectRotationOverrides}
+          objectQuaternionOverrides={objectQuaternionOverrides}
           onRenderProgressChange={onRenderProgressChange}
         />
       ) : (
@@ -367,6 +385,8 @@ function PreviewContent({
           selectedObjectId={selectedObjectId}
           onSelectedObjectChange={onSelectedObjectChange}
           objectPositionOverrides={objectPositionOverrides}
+          objectRotationOverrides={objectRotationOverrides}
+          objectQuaternionOverrides={objectQuaternionOverrides}
           onRenderProgressChange={onRenderProgressChange}
         />
       )}
@@ -383,6 +403,8 @@ function ScenePreviewViewport({
   selectedObjectId,
   selectedObjectDebugInfo,
   objectPositionOverrides,
+  objectRotationOverrides,
+  objectQuaternionOverrides,
   onSelectedObjectChange,
   onPointerDebugChange,
   onProgressChange,
@@ -464,6 +486,8 @@ function ScenePreviewViewport({
           selectedObjectId={selectedObjectId}
           onSelectedObjectChange={onSelectedObjectChange ?? (() => undefined)}
           objectPositionOverrides={objectPositionOverrides}
+          objectRotationOverrides={objectRotationOverrides}
+          objectQuaternionOverrides={objectQuaternionOverrides}
           onRenderProgressChange={setRenderProgress}
         />
         <OrbitControls
@@ -488,7 +512,7 @@ function ScenePreviewViewport({
       <div className="canvas-caption">
         <div>
           <strong>Three.js Preview</strong>
-          <span>悬停看标签，点击固定，并可在右侧模拟改坐标</span>
+          <span>悬停看标签，点击固定，并可在右侧模拟改坐标和旋转</span>
         </div>
         <span className="canvas-badge">{badge}</span>
       </div>

@@ -34,6 +34,7 @@ import type {
 
 export type WallDisplayMode = "solid" | "transparent" | "hidden" | "wireframe";
 export type Vector3Tuple = [number, number, number];
+export type QuaternionTuple = [number, number, number, number];
 
 export type WallPanel = {
   id: string;
@@ -61,7 +62,7 @@ export type AssetPlacement = {
   position: Vector3Tuple;
   rotationYDeg: number;
   scale: Vector3Tuple;
-  quaternion?: [number, number, number, number] | null;
+  quaternion?: QuaternionTuple | null;
   opacity?: number;
   wireframe?: boolean;
   visible?: boolean;
@@ -503,7 +504,7 @@ function AssetModel({
   position: Vector3Tuple;
   rotationYDeg: number;
   scale: Vector3Tuple;
-  quaternion?: [number, number, number, number] | null;
+  quaternion?: QuaternionTuple | null;
   onReady?: () => void;
   onBounds?: (bounds: SceneBounds) => void;
   materialProfile: MaterialProfile;
@@ -612,7 +613,7 @@ function MissingAssetPlaceholder({
   position: Vector3Tuple;
   rotationYDeg: number;
   scale: Vector3Tuple;
-  quaternion?: [number, number, number, number] | null;
+  quaternion?: QuaternionTuple | null;
   visible?: boolean;
   onBounds?: (bounds: SceneBounds) => void;
 }) {
@@ -685,7 +686,7 @@ function AssetModelContent({
   position: Vector3Tuple;
   rotationYDeg: number;
   scale: Vector3Tuple;
-  quaternion?: [number, number, number, number] | null;
+  quaternion?: QuaternionTuple | null;
   onReady?: () => void;
   onBounds?: (bounds: SceneBounds) => void;
   materialProfile: MaterialProfile;
@@ -1214,6 +1215,48 @@ export function resolveObjectPosition(
   positionOverrides?: Record<string, Vector3Tuple>,
 ): Vector3Tuple {
   return positionOverrides?.[objectId] ?? fallback;
+}
+
+export function resolveObjectRotation(
+  objectId: string,
+  fallback: number,
+  rotationOverrides?: Record<string, number>,
+): number {
+  return rotationOverrides?.[objectId] ?? fallback;
+}
+
+export function normalizeQuaternionTuple(
+  quaternion: QuaternionTuple,
+  epsilon = 0.000001,
+): QuaternionTuple | null {
+  const length = Math.hypot(quaternion[0], quaternion[1], quaternion[2], quaternion[3]);
+  if (!Number.isFinite(length) || length <= epsilon) {
+    return null;
+  }
+
+  return [
+    quaternion[0] / length,
+    quaternion[1] / length,
+    quaternion[2] / length,
+    quaternion[3] / length,
+  ];
+}
+
+export function resolveObjectQuaternion(
+  objectId: string,
+  fallback: QuaternionTuple | null | undefined,
+  quaternionOverrides?: Record<string, QuaternionTuple>,
+): QuaternionTuple | null {
+  const override = quaternionOverrides?.[objectId];
+  if (override) {
+    return normalizeQuaternionTuple(override);
+  }
+
+  if (!fallback) {
+    return null;
+  }
+
+  return normalizeQuaternionTuple(fallback);
 }
 
 export function SageRoomShell({

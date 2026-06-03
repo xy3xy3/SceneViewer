@@ -2,7 +2,10 @@ import type { RenderableSceneSmithSceneManifest, SceneManifest } from "../../../
 import {
   resolveWallOpacity,
   resolveObjectPosition,
+  resolveObjectQuaternion,
+  resolveObjectRotation,
   type AssetPlacement,
+  type QuaternionTuple,
   type SceneSmithShellTransform,
   type Vector3Tuple,
   type WallDisplayMode,
@@ -66,13 +69,15 @@ export function buildSceneSmithShellAssets({
 export function buildSceneSmithObjectAssets(
   renderScene: RenderableSceneSmithSceneManifest,
   positionOverrides?: Record<string, Vector3Tuple>,
+  rotationOverrides?: Record<string, number>,
+  quaternionOverrides?: Record<string, QuaternionTuple>,
 ): AssetPlacement[] {
   return renderScene.objects.map((object): AssetPlacement => ({
     key: object.id,
     assetPath: object.asset_path,
     position: resolveObjectPosition(object.id, object.position, positionOverrides),
-    rotationYDeg: object.rotation_y_deg,
-    quaternion: object.quaternion,
+    rotationYDeg: resolveObjectRotation(object.id, object.rotation_y_deg, rotationOverrides),
+    quaternion: resolveObjectQuaternion(object.id, object.quaternion, quaternionOverrides),
     scale: object.scale,
   }));
 }

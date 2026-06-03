@@ -7,6 +7,7 @@ import {
   type InspectableObject,
   type RenderProgressSnapshot,
   type SceneBounds,
+  type QuaternionTuple,
   type Vector3Tuple,
   type WallDisplayMode,
   ObjectHitTargets,
@@ -20,6 +21,8 @@ import {
   finalizeBounds,
   labelText,
   resolveObjectPosition,
+  resolveObjectQuaternion,
+  resolveObjectRotation,
   roomShellOpacity,
   updateMeasuredBoundsMap,
 } from "./shared";
@@ -78,6 +81,8 @@ export function Front3DPreviewContent({
   selectedObjectId,
   onSelectedObjectChange,
   objectPositionOverrides,
+  objectRotationOverrides,
+  objectQuaternionOverrides,
   onRenderProgressChange,
 }: {
   scene: SceneManifest | null;
@@ -88,6 +93,8 @@ export function Front3DPreviewContent({
   selectedObjectId: string | null;
   onSelectedObjectChange: (id: string | null) => void;
   objectPositionOverrides?: Record<string, Vector3Tuple>;
+  objectRotationOverrides?: Record<string, number>;
+  objectQuaternionOverrides?: Record<string, QuaternionTuple>;
   onRenderProgressChange: (snapshot: RenderProgressSnapshot) => void;
 }) {
   const [hoveredObjectId, setHoveredObjectId] = useState<string | null>(null);
@@ -138,12 +145,16 @@ export function Front3DPreviewContent({
           key: object.id,
           assetPath: object.asset_path,
           position: resolveObjectPosition(object.id, object.position, objectPositionOverrides),
-          rotationYDeg: object.rotation_y_deg,
+          rotationYDeg: resolveObjectRotation(object.id, object.rotation_y_deg, objectRotationOverrides),
           scale: object.scale,
-          quaternion: object.quaternion,
+          quaternion: resolveObjectQuaternion(
+            object.id,
+            object.quaternion,
+            objectQuaternionOverrides,
+          ),
         }),
       ),
-    [objectPositionOverrides, renderScene],
+    [objectPositionOverrides, objectQuaternionOverrides, objectRotationOverrides, renderScene],
   );
   const [shellBatchProgress, setShellBatchProgress] = useState(() =>
     createEmptyBatchProgress(renderScene.room_shells.length),

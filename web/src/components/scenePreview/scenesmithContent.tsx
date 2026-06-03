@@ -3,6 +3,7 @@ import type { RenderableSceneSmithSceneManifest, SceneManifest } from "../../typ
 import {
   BatchedAssetModels,
   Bounds,
+  type QuaternionTuple,
   type Vector3Tuple,
   type RenderProgressSnapshot,
   type SceneBounds,
@@ -29,6 +30,8 @@ export function SceneSmithPreviewContent({
   selectedObjectId,
   onSelectedObjectChange,
   objectPositionOverrides,
+  objectRotationOverrides,
+  objectQuaternionOverrides,
   onRenderProgressChange,
 }: {
   scene: SceneManifest | null;
@@ -39,6 +42,8 @@ export function SceneSmithPreviewContent({
   selectedObjectId: string | null;
   onSelectedObjectChange: (id: string | null) => void;
   objectPositionOverrides?: Record<string, Vector3Tuple>;
+  objectRotationOverrides?: Record<string, number>;
+  objectQuaternionOverrides?: Record<string, QuaternionTuple>;
   onRenderProgressChange: (snapshot: RenderProgressSnapshot) => void;
 }) {
   const [hoveredObjectId, setHoveredObjectId] = useState<string | null>(null);
@@ -60,8 +65,14 @@ export function SceneSmithPreviewContent({
     [renderScene, shellTransformMap, shellTransformsLoaded, wallDisplayMode, wallOpacity],
   );
   const objectAssets = useMemo(
-    () => buildSceneSmithObjectAssets(renderScene, objectPositionOverrides),
-    [objectPositionOverrides, renderScene],
+    () =>
+      buildSceneSmithObjectAssets(
+        renderScene,
+        objectPositionOverrides,
+        objectRotationOverrides,
+        objectQuaternionOverrides,
+      ),
+    [objectPositionOverrides, objectQuaternionOverrides, objectRotationOverrides, renderScene],
   );
   const [shellBatchProgress, setShellBatchProgress] = useState(() =>
     createEmptyBatchProgress(renderScene.room_shells.length),

@@ -8,6 +8,7 @@ import {
   Bounds,
   type AssetPlacement,
   type InspectableObject,
+  type QuaternionTuple,
   type RenderProgressSnapshot,
   type SceneBounds,
   type Vector3Tuple,
@@ -26,6 +27,8 @@ import {
   finalizeBounds,
   labelText,
   resolveObjectPosition,
+  resolveObjectQuaternion,
+  resolveObjectRotation,
   updateMeasuredBoundsMap,
 } from "./shared";
 
@@ -84,6 +87,8 @@ export function RoomLayoutPreviewContent({
   selectedObjectId,
   onSelectedObjectChange,
   objectPositionOverrides,
+  objectRotationOverrides,
+  objectQuaternionOverrides,
   onRenderProgressChange,
 }: {
   renderScene: RoomLayoutRenderScene;
@@ -93,6 +98,8 @@ export function RoomLayoutPreviewContent({
   selectedObjectId: string | null;
   onSelectedObjectChange: (id: string | null) => void;
   objectPositionOverrides?: Record<string, Vector3Tuple>;
+  objectRotationOverrides?: Record<string, number>;
+  objectQuaternionOverrides?: Record<string, QuaternionTuple>;
   onRenderProgressChange: (snapshot: RenderProgressSnapshot) => void;
 }) {
   const [hoveredObjectId, setHoveredObjectId] = useState<string | null>(null);
@@ -105,7 +112,7 @@ export function RoomLayoutPreviewContent({
           key: object.id,
           assetPath: object.asset_path,
           position: resolveObjectPosition(object.id, object.position, objectPositionOverrides),
-          rotationYDeg: object.rotation_y_deg,
+          rotationYDeg: resolveObjectRotation(object.id, object.rotation_y_deg, objectRotationOverrides),
           scale: object.scale,
         }),
       );
@@ -116,12 +123,16 @@ export function RoomLayoutPreviewContent({
         key: object.id,
         assetPath: object.asset_path,
         position: resolveObjectPosition(object.id, object.position, objectPositionOverrides),
-        rotationYDeg: object.rotation_y_deg,
-        quaternion: object.quaternion,
+        rotationYDeg: resolveObjectRotation(object.id, object.rotation_y_deg, objectRotationOverrides),
+        quaternion: resolveObjectQuaternion(
+          object.id,
+          object.quaternion,
+          objectQuaternionOverrides,
+        ),
         scale: object.scale,
       }),
     );
-  }, [objectPositionOverrides, renderScene]);
+  }, [objectPositionOverrides, objectQuaternionOverrides, objectRotationOverrides, renderScene]);
   const [batchProgress, setBatchProgress] = useState(() =>
     createEmptyBatchProgress(roomLayoutAssets.length),
   );
