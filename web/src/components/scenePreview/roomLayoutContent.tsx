@@ -8,6 +8,7 @@ import {
   Bounds,
   type AssetPlacement,
   type InspectableObject,
+  type PreferredSceneView,
   type QuaternionTuple,
   type RenderProgressSnapshot,
   type SceneBounds,
@@ -33,6 +34,28 @@ import {
 } from "./shared";
 
 type RoomLayoutRenderScene = RenderableSageSceneManifest | RenderableHsmSceneManifest;
+
+function computeHsmBenchmarkView(bounds: SceneBounds): PreferredSceneView {
+  const [width, height, depth] = bounds.size;
+  const minX = bounds.center[0] - width / 2;
+  const minZ = bounds.center[2] - depth / 2;
+  const targetY = Math.max(Math.min(height * 0.35, bounds.center[1]), 0.75);
+  const target: Vector3Tuple = [
+    bounds.center[0],
+    targetY,
+    bounds.center[2] - depth * 0.08,
+  ];
+
+  return {
+    position: [
+      minX + width * 0.08,
+      targetY + Math.max(height * 0.47, 1.1),
+      minZ + depth * 0.1,
+    ],
+    target,
+    up: [0, 1, 0],
+  };
+}
 
 function computeRoomLayoutBounds(renderScene: RoomLayoutRenderScene): SceneBounds {
   const min: Vector3Tuple = [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY];
@@ -199,6 +222,11 @@ export function RoomLayoutPreviewContent({
     });
   }, [batchProgress.complete, batchProgress.readyCount, onRenderProgressChange, roomLayoutAssets.length]);
 
+  const preferredView = useMemo(
+    () => (renderScene.dataset === "hsm" ? computeHsmBenchmarkView(sceneBounds) : null),
+    [renderScene.dataset, sceneBounds],
+  );
+
   function handleObjectSelect(id: string, additive: boolean) {
     if (additive && selectedObjectId === id) {
       onSelectedObjectChange(null);
@@ -209,7 +237,11 @@ export function RoomLayoutPreviewContent({
 
   return (
     <Bounds key={renderScene.scene_uid} clip observe={false} margin={1.18}>
-      <SceneBoundsController sceneKey={renderScene.scene_uid} fitVersion={fitVersion} />
+      <SceneBoundsController
+        sceneKey={renderScene.scene_uid}
+        fitVersion={fitVersion}
+        preferredView={preferredView}
+      />
       <group
         onPointerMissed={() => {
           setHoveredObjectId(null);

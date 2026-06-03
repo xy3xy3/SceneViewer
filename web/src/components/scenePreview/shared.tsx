@@ -19,7 +19,7 @@ import {
   useGLTF,
   useTexture,
 } from "@react-three/drei";
-import type { ThreeEvent } from "@react-three/fiber";
+import { useThree, type ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
 import { fetchRepoText, toRepoAssetUrl } from "../../lib/repoAssets";
 import type {
@@ -35,6 +35,11 @@ import type {
 export type WallDisplayMode = "solid" | "transparent" | "hidden" | "wireframe";
 export type Vector3Tuple = [number, number, number];
 export type QuaternionTuple = [number, number, number, number];
+export type PreferredSceneView = {
+  position: Vector3Tuple;
+  target: Vector3Tuple;
+  up?: Vector3Tuple;
+};
 
 export type WallPanel = {
   id: string;
@@ -1101,11 +1106,23 @@ export function ObjectHitTargets({
 export function SceneBoundsController({
   sceneKey,
   fitVersion,
+  preferredView,
 }: {
   sceneKey: string;
   fitVersion: number;
+  preferredView?: PreferredSceneView | null;
 }) {
   const bounds = useBounds();
+  const camera = useThree((state) => state.camera);
+  const controls = useThree(
+    (state) =>
+      state.controls as
+        | {
+            target?: THREE.Vector3;
+            update?: () => void;
+          }
+        | undefined,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -1115,13 +1132,24 @@ export function SceneBoundsController({
           return;
         }
         bounds.refresh().clip().fit();
+        if (preferredView) {
+          camera.position.set(...preferredView.position);
+          camera.up.set(...(preferredView.up ?? [0, 1, 0]));
+          camera.lookAt(...preferredView.target);
+          camera.updateProjectionMatrix();
+
+          if (controls?.target) {
+            controls.target.set(...preferredView.target);
+            controls.update?.();
+          }
+        }
       });
     });
     return () => {
       cancelled = true;
       window.cancelAnimationFrame(frame);
     };
-  }, [bounds, fitVersion, sceneKey]);
+  }, [bounds, camera, controls, fitVersion, preferredView, sceneKey]);
 
   return null;
 }
