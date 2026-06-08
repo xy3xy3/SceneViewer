@@ -29,7 +29,6 @@ import { fetchRepoJson, toRepoAssetUrl } from "./lib/repoAssets";
 import type {
   DatasetCatalog,
   DatasetIndex,
-  NormalizedObject,
   NormalizedRoom,
   RenderableDatasetCatalog,
   RenderableDatasetIndex,
@@ -50,11 +49,25 @@ type RotationInputSource = "euler" | "quaternion" | null;
 
 type RenderableDebugObject = {
   id: string;
+  type?: string | null;
   label: string;
   originalPosition: Vector3Tuple;
   originalQuaternion: QuaternionTuple;
   originalRotationYDeg: number;
   sourceId?: string | null;
+};
+
+type ObjectFinderEntry = {
+  id: string;
+  type: string;
+  label: string;
+  sourceId?: string | null;
+  searchText: string;
+};
+
+type ObjectFinderGroup = {
+  type: string;
+  items: ObjectFinderEntry[];
 };
 
 const DEBUG_AXES: Array<{ axis: DebugAxis; index: 0 | 1 | 2 }> = [
@@ -101,13 +114,49 @@ function collectPreviewImages(scene: SceneManifest | null): string[] {
     .filter((value): value is string => Boolean(value));
 }
 
-function summarizeObjectTypes(objects: NormalizedObject[]) {
-  const counts = new Map<string, number>();
+function buildObjectFinderGroups(
+  objects: RenderableDebugObject[],
+  filterText: string,
+): ObjectFinderGroup[] {
+  const normalizedFilter = filterText.trim().toLowerCase();
+  const groups = new Map<string, ObjectFinderEntry[]>();
+
   for (const object of objects) {
-    const key = object.type || object.object_type || "unknown";
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+    const type = object.type?.trim() || "unknown";
+    const entry: ObjectFinderEntry = {
+      id: object.id,
+      type,
+      label: object.label,
+      sourceId: object.sourceId,
+      searchText: [type, object.label, object.id, object.sourceId ?? ""].join(" ").toLowerCase(),
+    };
+
+    if (normalizedFilter && !entry.searchText.includes(normalizedFilter)) {
+      continue;
+    }
+
+    const existing = groups.get(type);
+    if (existing) {
+      existing.push(entry);
+    } else {
+      groups.set(type, [entry]);
+    }
   }
-  return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+
+  return [...groups.entries()]
+    .map(([type, items]) => ({
+      type,
+      items: [...items].sort(
+        (left, right) =>
+          left.label.localeCompare(right.label, undefined, { sensitivity: "base" }) ||
+          left.id.localeCompare(right.id, undefined, { sensitivity: "base" }),
+      ),
+    }))
+    .sort(
+      (left, right) =>
+        right.items.length - left.items.length ||
+        left.type.localeCompare(right.type, undefined, { sensitivity: "base" }),
+    );
 }
 
 function sourceAssetEntries(scene: SceneManifest | null) {
@@ -297,6 +346,7 @@ function buildRenderableDebugObjects(
     case "sage":
       return renderScene.objects.map((object) => ({
         id: object.id,
+        type: object.type ?? null,
         label: object.type || object.description || object.source_id || object.id,
         originalPosition: object.position,
         originalQuaternion: quaternionFromRotationYDeg(object.rotation_y_deg),
@@ -306,6 +356,7 @@ function buildRenderableDebugObjects(
     case "hsm":
       return renderScene.objects.map((object) => ({
         id: object.id,
+        type: object.object_type || object.semantic_label || object.category || null,
         label:
           object.name ||
           object.semantic_label ||
@@ -324,6 +375,7 @@ function buildRenderableDebugObjects(
         const sourceObject = sourceObjects.get(object.id);
         return {
           id: object.id,
+          type: sourceObject?.object_type || object.object_type || null,
           label:
             sourceObject?.name ||
             sourceObject?.object_type ||
@@ -341,6 +393,7 @@ function buildRenderableDebugObjects(
         const sourceObject = sourceObjects.get(object.id);
         return {
           id: object.id,
+          type: sourceObject?.type || sourceObject?.object_type || object.object_type || null,
           label:
             sourceObject?.name ||
             sourceObject?.type ||
@@ -359,6 +412,7 @@ function buildRenderableDebugObjects(
     case "hssd":
       return renderScene.objects.map((object) => ({
         id: object.id,
+        type: object.object_type || null,
         label: object.object_type || object.description || object.source_id || object.id,
         originalPosition: object.position,
         originalQuaternion: resolveDebugQuaternion(object.quaternion, object.rotation_y_deg),
@@ -423,6 +477,8 @@ export default function App() {
   const [hiddenReadyProgressSceneUid, setHiddenReadyProgressSceneUid] = useState<string | null>(
     null,
   );
+  const [objectFinderQuery, setObjectFinderQuery] = useState("");
+  const [expandedObjectTypes, setExpandedObjectTypes] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -618,10 +674,14 @@ export default function App() {
       ? null
       : visiblePreviewProgress;
 
+  const renderableDebugObjects = useMemo(
+    () => buildRenderableDebugObjects(selectedScene, selectedRenderScene),
+    [selectedRenderScene, selectedScene],
+  );
   const previewImages = useMemo(() => collectPreviewImages(selectedScene), [selectedScene]);
-  const objectTypeSummary = useMemo(
-    () => summarizeObjectTypes(selectedScene?.normalized.objects ?? []),
-    [selectedScene],
+  const objectFinderGroups = useMemo(
+    () => buildObjectFinderGroups(renderableDebugObjects, objectFinderQuery),
+    [objectFinderQuery, renderableDebugObjects],
   );
   const assetEntries = useMemo(() => sourceAssetEntries(selectedScene), [selectedScene]);
   const selectedSceneLabel = selectedSceneRenderSummary
@@ -630,10 +690,6 @@ export default function App() {
         preprocessedSceneSummaryMap.get(selectedSceneRenderSummary.scene_uid),
       )
     : selectedSceneSummary?.title || selectedSceneUid || "Choose a scene";
-  const renderableDebugObjects = useMemo(
-    () => buildRenderableDebugObjects(selectedScene, selectedRenderScene),
-    [selectedRenderScene, selectedScene],
-  );
   const renderableDebugObjectMap = useMemo(
     () => new Map(renderableDebugObjects.map((object) => [object.id, object] as const)),
     [renderableDebugObjects],
@@ -687,6 +743,8 @@ export default function App() {
     setSelectedObjectId(null);
     setObjectPositionOverrides({});
     setObjectQuaternionOverrides({});
+    setObjectFinderQuery("");
+    setExpandedObjectTypes({});
     setPointerDebug(null);
     setPositionDraft(null);
     setEulerDraft(null);
@@ -700,6 +758,23 @@ export default function App() {
       return;
     }
     setSelectedObjectId(null);
+  }, [renderableDebugObjectMap, selectedObjectId]);
+
+  useEffect(() => {
+    if (!selectedObjectId) {
+      return;
+    }
+
+    const selectedObject = renderableDebugObjectMap.get(selectedObjectId);
+    const selectedType = selectedObject?.type?.trim() || "unknown";
+    setExpandedObjectTypes((current) =>
+      current[selectedType]
+        ? current
+        : {
+            ...current,
+            [selectedType]: true,
+          },
+    );
   }, [renderableDebugObjectMap, selectedObjectId]);
 
   useEffect(() => {
@@ -769,6 +844,13 @@ export default function App() {
   function handleWallOpacityChange(value: string) {
     setWallOpacity(Number(value) / 100);
   }
+
+  const handleObjectTypeToggle = useCallback((type: string) => {
+    setExpandedObjectTypes((current) => ({
+      ...current,
+      [type]: !current[type],
+    }));
+  }, []);
 
   const handlePreviewProgressChange = useCallback((snapshot: ScenePreviewProgressSnapshot) => {
     setPreviewProgress(snapshot);
@@ -1412,15 +1494,77 @@ export default function App() {
           <section className="info-card">
             <div className="section-title">
               <Boxes size={16} />
-              <h3>Object Types</h3>
+              <h3>Object Finder</h3>
             </div>
-            <div className="list-stack compact">
-              {objectTypeSummary.slice(0, 12).map(([type, count]) => (
-                <div key={type} className="type-row">
-                  <span>{type}</span>
-                  <strong>{count}</strong>
+            <div className="object-finder">
+              <label className="object-finder-search">
+                <span>Search by type, label, or id</span>
+                <input
+                  type="search"
+                  value={objectFinderQuery}
+                  onChange={(event) => setObjectFinderQuery(event.target.value)}
+                  placeholder="chair / bowl / object id"
+                />
+              </label>
+
+              {objectFinderGroups.length > 0 ? (
+                <div className="list-stack compact">
+                  {objectFinderGroups.map((group) => {
+                    const isExpanded =
+                      objectFinderQuery.trim().length > 0 ||
+                      group.items.length === 1 ||
+                      Boolean(expandedObjectTypes[group.type]);
+
+                    return (
+                      <div key={group.type} className="object-type-group">
+                        <button
+                          type="button"
+                          className={`type-row type-row-button ${isExpanded ? "is-expanded" : ""}`}
+                          onClick={() => {
+                            if (group.items.length === 1) {
+                              setSelectedObjectId(group.items[0].id);
+                              return;
+                            }
+                            handleObjectTypeToggle(group.type);
+                          }}
+                        >
+                          <span>{group.type}</span>
+                          <strong>{group.items.length}</strong>
+                        </button>
+
+                        {isExpanded ? (
+                          <div className="object-instance-list">
+                            {group.items.map((item, index) => {
+                              const fallbackLabel =
+                                group.items.length > 1 ? `${group.type} #${index + 1}` : group.type;
+                              const displayLabel = item.label === group.type ? fallbackLabel : item.label;
+                              return (
+                                <button
+                                  key={item.id}
+                                  type="button"
+                                  className={`object-instance-row ${
+                                    selectedObjectId === item.id ? "is-selected" : ""
+                                  }`}
+                                  onClick={() => setSelectedObjectId(item.id)}
+                                >
+                                  <span>{displayLabel}</span>
+                                  <strong>{item.id}</strong>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
+              ) : (
+                <p className="long-copy">
+                  {objectFinderQuery.trim()
+                    ? "No matching renderable objects."
+                    : "This scene does not expose selectable renderable objects yet."}
+                </p>
+              )}
             </div>
           </section>
 
