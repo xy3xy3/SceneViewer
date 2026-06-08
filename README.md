@@ -149,8 +149,34 @@ uv run dataset-downloader import-scenesmith-local \
 
 - 这个命令会把本地 `scene_*` 输出接到 `assets/scenesmith/source/extracted/<subset>/` 下。
 - 默认使用软链接，不会重复拷贝大文件；如需真正复制可加 `--mode copy`。
-- 重复结果默认覆盖已有 view 导入；如需保留已有结果并跳过重复项，可加 `--no-force`。
+- 重复结果默认覆盖已有导入；如需保留已有结果并跳过重复项，可加 `--skip-existing`。
 - `--build-preview` 会顺手刷新 `assets/preprocessed/scenesmith/` 和 `assets/renderable/scenesmith/`，前端就能直接预览。
+
+如果你已经在 `SceneBenchmark` 里跑好了 benchmark 场景，也可以直接按 benchmark 结果导入。这个命令会读取 `HSM/`、`SAGE-10k/`、`SceneSmith/` 里的 `scene.json`，按其中记录的 `source_path` 只接入那批被 benchmark 选中的场景：
+
+```bash
+cd scripts/dataset_downloader
+uv sync
+uv run dataset-downloader import-benchmark-local \
+  /home/xy/proj/SceneBenchmark \
+  --build-preview
+```
+
+也可以只导入某几个数据集：
+
+```bash
+uv run dataset-downloader import-benchmark-local \
+  /home/xy/proj/SceneBenchmark/assets \
+  --dataset hsm \
+  --dataset sage \
+  --build-preview
+```
+
+说明：
+
+- 支持直接传 `SceneBenchmark` 仓库根目录，或者它的 `assets/` 目录。
+- 默认使用软链接；如需真正复制文件可加 `--mode copy`。
+- 命令会把 benchmark 结果里对应的源资产接到 `assets/hsm`、`assets/sage`、`assets/scenesmith`，然后复用当前仓库已有的预处理和 renderable 流程。
 
 详细的数据集操作说明请查看 [scripts/dataset_downloader/README.md](scripts/dataset_downloader/README.md)。
 

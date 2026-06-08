@@ -6,7 +6,7 @@ from pathlib import Path
 
 from huggingface_hub import HfApi
 
-from .config import DATASETS, DatasetSpec, SCENESMITH_ALL_SUBSETS
+from .config import ASSETS_ROOT, DATASETS, DatasetSpec, SCENESMITH_ALL_SUBSETS
 from .download import (
     balanced_sample,
     build_download_manifest,
@@ -24,6 +24,7 @@ from .download import (
     _selected_subsets,
 )
 from .hsm import HSM_DATASET_KEY, HSM_HSSD_ROOT, hsm_generated_scenes_root
+from .local_benchmark import import_local_benchmark_output
 from .local_hssd import import_local_hssd_output
 from .local_hsm import import_local_hsm_output
 from .local_sceneweaver import import_local_sceneweaver_output
@@ -526,8 +527,76 @@ def main() -> None:
         action="store_true",
         help="Also refresh HSM preprocessed and renderable assets after import.",
     )
+    import_benchmark_parser = subparsers.add_parser(
+        "import-benchmark-local",
+        help="Import selected SceneBenchmark outputs into repo-local assets for frontend preview.",
+    )
+    import_benchmark_parser.add_argument(
+        "source",
+        type=Path,
+        help=(
+            "Path to the SceneBenchmark repo root or its assets/ directory. "
+            "The command reads benchmark scene outputs from HSM/, SAGE-10k/, and SceneSmith/."
+        ),
+    )
+    import_benchmark_parser.add_argument(
+        "--dataset",
+        action="append",
+        choices=["all", HSM_DATASET_KEY, "sage", "scenesmith"],
+        dest="datasets",
+        help=(
+            "Limit the import to one or more datasets. "
+            "Repeat the flag to select multiple datasets; omit it to import all supported datasets."
+        ),
+    )
+    import_benchmark_parser.add_argument(
+        "--destination",
+        type=Path,
+        default=ASSETS_ROOT,
+        help="Target assets root. Defaults to the repo's assets/ directory.",
+    )
+    import_benchmark_parser.add_argument(
+        "--mode",
+        choices=["link", "copy"],
+        default="link",
+        help="Whether to symlink benchmark source assets or copy them into the repo.",
+    )
+    import_benchmark_parser.add_argument(
+        "--force",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Replace existing imported assets that map to the same target path.",
+    )
+    import_benchmark_parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help=(
+            "Skip target paths that already exist. "
+            "When omitted, existing imported targets are replaced."
+        ),
+    )
+    import_benchmark_parser.add_argument(
+        "--build-preview",
+        action="store_true",
+        help="Also refresh preprocessed and renderable indexes for the selected datasets.",
+    )
 
     args = parser.parse_args()
+    if args.command == "import-benchmark-local":
+        replace_existing = args.force and not args.skip_existing
+        selected_datasets = args.datasets
+        if selected_datasets and "all" in selected_datasets:
+            selected_datasets = None
+        payload = import_local_benchmark_output(
+            source=args.source,
+            datasets=selected_datasets,
+            destination_root=args.destination,
+            mode=args.mode,
+            force=replace_existing,
+            build_preview=args.build_preview,
+        )
+        print(json.dumps(payload, indent=2))
+        return
     if args.command == "import-scenesmith-local":
         replace_existing = args.force and not args.skip_existing
         payload = import_local_scenesmith_output(
