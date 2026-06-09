@@ -103,6 +103,15 @@ def preprocess_hsm_dataset(scene_limit: int | None = None) -> dict[str, object]:
                 break
 
             raw_scene = load_hsm_scene(scene_path)
+            scene_id = hsm_scene_id_from_remote_path(scene_path.name)
+            asset_annotations = _load_asset_annotation_index(
+                scene_path.parent / scene_id / "asset_annotations",
+                DATASETS[HSM_DATASET_KEY].destination_root
+                / "source"
+                / "benchmark_annotations"
+                / scene_id
+                / "asset_annotations",
+            )
             scene_state = raw_scene.get("scene")
             if not isinstance(scene_state, dict):
                 skipped_scenes.append(
@@ -156,6 +165,7 @@ def preprocess_hsm_dataset(scene_limit: int | None = None) -> dict[str, object]:
                 model_id = hsm_object_model_id(raw_object.get("modelId"))
                 if not model_id:
                     continue
+                object_id = str(raw_object.get("id") or model_id)
                 hssd_metadata = hssd_metadata_by_id.get(model_id, {})
                 detailed_name = hssd_metadata.get("name") if isinstance(hssd_metadata.get("name"), str) else None
                 semantic_label = (
@@ -163,6 +173,11 @@ def preprocess_hsm_dataset(scene_limit: int | None = None) -> dict[str, object]:
                     if isinstance(hssd_metadata.get("semantic_label"), str)
                     else None
                 )
+                annotation_fields = _asset_annotation_label_fields(
+                    asset_annotations.get(object_id)
+                )
+                preferred_label = annotation_fields.get("preferred_label")
+                category_label = annotation_fields.get("category_label")
                 annot_path = hsm_downloaded_support_asset(DATASETS[HSM_DATASET_KEY].destination_root, model_id)
                 annot_surface_path = hsm_downloaded_support_asset(
                     DATASETS[HSM_DATASET_KEY].destination_root,
@@ -171,12 +186,12 @@ def preprocess_hsm_dataset(scene_limit: int | None = None) -> dict[str, object]:
                 )
                 normalized_objects.append(
                     {
-                        "id": str(raw_object.get("id") or model_id),
+                        "id": object_id,
                         "room_id": room_id,
-                        "type": semantic_label or "hssd_object",
-                        "name": detailed_name or model_id,
-                        "description": detailed_name or semantic_label or model_id,
-                        "object_type": semantic_label or "hssd_object",
+                        "type": category_label or semantic_label or "hssd_object",
+                        "name": preferred_label or detailed_name or model_id,
+                        "description": preferred_label or detailed_name or semantic_label or model_id,
+                        "object_type": category_label or semantic_label or "hssd_object",
                         "position": hsm_position_from_transform(raw_object.get("transform")),
                         "rotation": {
                             "z": hsm_yaw_deg_from_transform(raw_object.get("transform")),
@@ -192,6 +207,11 @@ def preprocess_hsm_dataset(scene_limit: int | None = None) -> dict[str, object]:
                             "hssd_up": hssd_metadata.get("up"),
                             "hssd_front": hssd_metadata.get("front"),
                             "hssd_support_region": hssd_metadata.get("support_region"),
+                            "vlm_canonical_name": annotation_fields.get("canonical_name"),
+                            "vlm_category_norm": annotation_fields.get("category_norm"),
+                            "vlm_benchmark_relevance": annotation_fields.get("benchmark_relevance"),
+                            "vlm_annotation_source": annotation_fields.get("annotation_source"),
+                            "vlm_annotator_model": annotation_fields.get("annotator_model"),
                             "transform": raw_object.get("transform"),
                             "support_region_asset": _repo_path(annot_path) if annot_path else None,
                             "support_region_surface_asset": (
@@ -200,8 +220,6 @@ def preprocess_hsm_dataset(scene_limit: int | None = None) -> dict[str, object]:
                         },
                     }
                 )
-
-            scene_id = hsm_scene_id_from_remote_path(scene_path.name)
             scene_uid = f"{HSM_DATASET_KEY}/{scene_id}"
             # Look up prompt from SceneEval-500 annotations
             scene_id_num = scene_id.removeprefix("scene_")
@@ -294,4 +312,3 @@ def preprocess_hsm_dataset(scene_limit: int | None = None) -> dict[str, object]:
     }
     _write_json(output_root / "index.json", index)
     return index
-

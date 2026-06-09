@@ -2,6 +2,16 @@ from __future__ import annotations
 
 from .common import *
 
+
+def _scenesmith_annotation_subset_candidates(subset: str) -> list[str]:
+    candidates = [subset]
+    if subset.startswith("local-"):
+        fallback = subset.removeprefix("local-").strip()
+        if fallback and fallback not in candidates:
+            candidates.append(fallback)
+    return candidates
+
+
 def _resolve_scenesmith_sdf(scene_dir: Path, room_id: str, sdf_path: str | None) -> Path | None:
     if not sdf_path:
         return None
@@ -301,6 +311,8 @@ def _normalize_scenesmith_room(
     scene_dir: Path,
     room_id: str,
     room_data: dict[str, object],
+    *,
+    asset_annotations: dict[str, dict[str, object]] | None = None,
 ) -> tuple[dict[str, object], list[dict[str, object]]]:
     room_geometry = room_data.get("room_geometry", {})
     objects = room_data.get("objects", {})
@@ -317,6 +329,9 @@ def _normalize_scenesmith_room(
 
     for object_id, obj_data in objects.items():
         metadata = obj_data.get("metadata", {}) if isinstance(obj_data, dict) else {}
+        annotation_fields = _asset_annotation_label_fields(
+            asset_annotations.get(object_id) if asset_annotations else None
+        )
         raw_sdf_path = obj_data.get("sdf_path") if isinstance(obj_data, dict) else None
         raw_gltf_path = obj_data.get("gltf_path") if isinstance(obj_data, dict) else None
         raw_geometry_path = obj_data.get("geometry_path") if isinstance(obj_data, dict) else None
@@ -335,12 +350,19 @@ def _normalize_scenesmith_room(
             {
                 "id": object_id,
                 "room_id": room_id,
-                "name": obj_data.get("name") if isinstance(obj_data, dict) else None,
+                "name": (
+                    annotation_fields.get("preferred_label")
+                    or (obj_data.get("name") if isinstance(obj_data, dict) else None)
+                ),
                 "description": (
-                    obj_data.get("description") if isinstance(obj_data, dict) else None
+                    annotation_fields.get("preferred_label")
+                    or (obj_data.get("description") if isinstance(obj_data, dict) else None)
                 ),
                 "object_type": (
+                    annotation_fields.get("category_label")
+                    or (
                     obj_data.get("object_type") if isinstance(obj_data, dict) else None
+                    )
                 )
                 or metadata.get("object_type")
                 or metadata.get("asset_type"),
@@ -355,7 +377,14 @@ def _normalize_scenesmith_room(
                 ),
                 "sdf_path": _repo_path(resolved_sdf) if resolved_sdf else None,
                 "gltf_path": _repo_path(resolved_gltf) if resolved_gltf else None,
-                "metadata": metadata,
+                "metadata": {
+                    **metadata,
+                    "vlm_canonical_name": annotation_fields.get("canonical_name"),
+                    "vlm_category_norm": annotation_fields.get("category_norm"),
+                    "vlm_benchmark_relevance": annotation_fields.get("benchmark_relevance"),
+                    "vlm_annotation_source": annotation_fields.get("annotation_source"),
+                    "vlm_annotator_model": annotation_fields.get("annotator_model"),
+                },
             }
         )
 
@@ -459,6 +488,17 @@ def preprocess_scenesmith_dataset(scene_limit: int | None = None) -> dict[str, o
                     house_state = json.loads(house_state_path.read_text())
                 else:
                     house_state = _build_scenesmith_fallback_state(scene_dir, dmd_path)
+                annotation_roots = [scene_dir / "asset_annotations"]
+                annotation_roots.extend(
+                    DATASETS["scenesmith"].destination_root
+                    / "source"
+                    / "benchmark_annotations"
+                    / candidate_subset
+                    / scene_id
+                    / "asset_annotations"
+                    for candidate_subset in _scenesmith_annotation_subset_candidates(subset)
+                )
+                asset_annotations = _load_asset_annotation_index(*annotation_roots)
                 raw_rooms = house_state.get("rooms", {})
                 normalized_rooms: list[dict[str, object]] = []
                 normalized_objects: list[dict[str, object]] = []
@@ -467,6 +507,7 @@ def preprocess_scenesmith_dataset(scene_limit: int | None = None) -> dict[str, o
                         scene_dir,
                         room_id,
                         room_data,
+                        asset_annotations=asset_annotations,
                     )
                     normalized_rooms.append(room_manifest)
                     normalized_objects.extend(room_objects)

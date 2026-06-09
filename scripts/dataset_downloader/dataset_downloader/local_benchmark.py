@@ -63,6 +63,33 @@ def _link_or_copy(src: Path, dst: Path, mode: str) -> None:
         shutil.copy2(src, dst)
 
 
+def _import_annotation_sidecar(
+    *,
+    result_dir: Path,
+    destination_root: Path,
+    mode: str,
+    force: bool,
+) -> dict[str, object] | None:
+    source_path = result_dir / "asset_annotations"
+    if not source_path.exists():
+        return None
+
+    if destination_root.exists() or destination_root.is_symlink():
+        if not force:
+            return {
+                "status": "skipped",
+                "reason": "target_exists",
+                "target_path": str(destination_root),
+            }
+    _link_or_copy(source_path, destination_root, mode)
+    return {
+        "status": "imported",
+        "source_path": str(source_path),
+        "target_path": str(destination_root),
+        "mode": mode,
+    }
+
+
 def _coerce_benchmark_assets_root(source: Path) -> Path:
     resolved = source.resolve()
     candidate_roots = [resolved]
@@ -220,6 +247,7 @@ def _import_hsm_results(
     generated_root = dataset_root / "source" / "raw" / "generated_scenes"
     imported: list[dict[str, object]] = []
     skipped: list[dict[str, object]] = []
+    annotation_sidecars: list[dict[str, object]] = []
 
     for result in results:
         source_path = _benchmark_source_path(result)
@@ -234,6 +262,24 @@ def _import_hsm_results(
             continue
 
         target_path = generated_root / source_path.name
+        annotation_sidecar = _import_annotation_sidecar(
+            result_dir=result.result_dir,
+            destination_root=dataset_root
+            / "source"
+            / "benchmark_annotations"
+            / target_path.stem
+            / "asset_annotations",
+            mode=mode,
+            force=force,
+        )
+        if annotation_sidecar is not None:
+            annotation_sidecars.append(
+                {
+                    "result": result.result_name,
+                    "scene_id": target_path.stem,
+                    **annotation_sidecar,
+                }
+            )
         if target_path.exists() or target_path.is_symlink():
             if not force:
                 skipped.append(
@@ -342,6 +388,7 @@ def _import_hsm_results(
         "skipped_scenes": skipped,
         "metadata_imported": metadata_imported,
         "metadata_skipped": metadata_skipped,
+        "annotation_sidecars": annotation_sidecars,
         "support_region_dataset": support_region_status,
         "hssd_models": hssd_status,
     }
@@ -358,6 +405,7 @@ def _import_sage_results(
     extracted_root = dataset_root / "source" / "extracted"
     imported: list[dict[str, object]] = []
     skipped: list[dict[str, object]] = []
+    annotation_sidecars: list[dict[str, object]] = []
 
     for result in results:
         source_path = _benchmark_source_path(result)
@@ -372,6 +420,24 @@ def _import_sage_results(
             continue
 
         target_path = extracted_root / source_path.name
+        annotation_sidecar = _import_annotation_sidecar(
+            result_dir=result.result_dir,
+            destination_root=dataset_root
+            / "source"
+            / "benchmark_annotations"
+            / target_path.name
+            / "asset_annotations",
+            mode=mode,
+            force=force,
+        )
+        if annotation_sidecar is not None:
+            annotation_sidecars.append(
+                {
+                    "result": result.result_name,
+                    "scene_id": target_path.name,
+                    **annotation_sidecar,
+                }
+            )
         if target_path.exists() or target_path.is_symlink():
             if not force:
                 skipped.append(
@@ -400,6 +466,7 @@ def _import_sage_results(
         "skipped_scene_count": len(skipped),
         "imported_scenes": imported,
         "skipped_scenes": skipped,
+        "annotation_sidecars": annotation_sidecars,
     }
 
 
@@ -413,6 +480,7 @@ def _import_scenesmith_results(
     imported: list[dict[str, object]] = []
     skipped: list[dict[str, object]] = []
     seen_sources: set[tuple[str, str | None]] = set()
+    annotation_sidecars: list[dict[str, object]] = []
 
     for result in results:
         try:
@@ -458,6 +526,54 @@ def _import_scenesmith_results(
                 "manifest_path": payload.get("manifest_path"),
             }
         )
+        scene_sidecar_entries: list[dict[str, object]] = []
+        for scene_key in ("imported_scenes", "skipped_scenes"):
+            scene_entries = payload.get(scene_key)
+            if not isinstance(scene_entries, list):
+                continue
+            for scene_entry in scene_entries:
+                if not isinstance(scene_entry, dict):
+                    continue
+                target_scene_id = scene_entry.get("scene_id")
+                target_subset = scene_entry.get("subset")
+                if not isinstance(target_scene_id, str) or not isinstance(target_subset, str):
+                    continue
+                dedupe_key = (target_subset, target_scene_id)
+                if dedupe_key in {
+                    (entry.get("subset"), entry.get("scene_id")) for entry in scene_sidecar_entries
+                }:
+                    continue
+                scene_sidecar_entries.append(
+                    {
+                        "scene_id": target_scene_id,
+                        "subset": target_subset,
+                    }
+                )
+
+        for scene_entry in scene_sidecar_entries:
+            target_scene_id = str(scene_entry["scene_id"])
+            target_subset = str(scene_entry["subset"])
+            annotation_sidecar = _import_annotation_sidecar(
+                result_dir=result.result_dir,
+                destination_root=destination_root
+                / "scenesmith"
+                / "source"
+                / "benchmark_annotations"
+                / target_subset
+                / target_scene_id
+                / "asset_annotations",
+                mode=mode,
+                force=force,
+            )
+            if annotation_sidecar is not None:
+                annotation_sidecars.append(
+                    {
+                        "result": result.result_name,
+                        "scene_id": target_scene_id,
+                        "subset": target_subset,
+                        **annotation_sidecar,
+                    }
+                )
 
     return {
         "dataset": "scenesmith",
@@ -466,6 +582,7 @@ def _import_scenesmith_results(
         "skipped_group_count": len(skipped),
         "imports": imported,
         "skipped": skipped,
+        "annotation_sidecars": annotation_sidecars,
     }
 
 

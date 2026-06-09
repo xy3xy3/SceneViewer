@@ -15,6 +15,14 @@ def preprocess_sage_dataset(scene_limit: int | None = None) -> dict[str, object]
         for scene_dir in sorted(path for path in source_root.iterdir() if path.is_dir()):
             if scene_limit is not None and len(scenes) >= scene_limit:
                 break
+            asset_annotations = _load_asset_annotation_index(
+                scene_dir / "asset_annotations",
+                DATASETS["sage"].destination_root
+                / "source"
+                / "benchmark_annotations"
+                / scene_dir.name
+                / "asset_annotations",
+            )
             layout_files = sorted(scene_dir.glob("layout_*.json"))
             if not layout_files:
                 skipped_scenes.append(
@@ -65,7 +73,12 @@ def preprocess_sage_dataset(scene_limit: int | None = None) -> dict[str, object]
 
                 for obj in room_objects:
                     normalized_objects.append(
-                        _normalize_sage_object(scene_dir, room_id, obj)
+                        _normalize_sage_object(
+                            scene_dir,
+                            room_id,
+                            obj,
+                            asset_annotations=asset_annotations,
+                        )
                     )
 
             scene_id = scene_dir.name
@@ -144,4 +157,3 @@ def preprocess_sage_dataset(scene_limit: int | None = None) -> dict[str, object]
     }
     _write_json(output_root / "index.json", index)
     return index
-

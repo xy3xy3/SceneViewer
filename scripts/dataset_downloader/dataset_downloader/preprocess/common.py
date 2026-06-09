@@ -39,6 +39,86 @@ SCHEMA_VERSION = 1
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
+def _clean_text_value(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
+
+
+def _humanize_category_label(value: object) -> str | None:
+    text = _clean_text_value(value)
+    if not text:
+        return None
+    return re.sub(r"[_-]+", " ", text).strip() or text
+
+
+def _load_yaml_file(path: Path) -> dict[str, object] | None:
+    try:
+        payload = yaml.safe_load(path.read_text())
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _load_asset_annotation_index(*roots: Path) -> dict[str, dict[str, object]]:
+    result: dict[str, dict[str, object]] = {}
+    for root in roots:
+        if not root.exists() or not root.is_dir():
+            continue
+        for annotation_path in sorted(root.glob("*.yaml")):
+            payload = _load_yaml_file(annotation_path)
+            if not payload:
+                continue
+            object_id = _clean_text_value(payload.get("object_id"))
+            if not object_id:
+                continue
+            result[object_id] = payload
+    return result
+
+
+def _asset_annotation_label_fields(annotation: dict[str, object] | None) -> dict[str, object]:
+    if not annotation:
+        return {}
+
+    effective = (
+        annotation.get("effective_annotation")
+        if isinstance(annotation.get("effective_annotation"), dict)
+        else {}
+    )
+    vlm_prediction = (
+        annotation.get("vlm_prediction")
+        if isinstance(annotation.get("vlm_prediction"), dict)
+        else {}
+    )
+    provenance = (
+        annotation.get("provenance")
+        if isinstance(annotation.get("provenance"), dict)
+        else {}
+    )
+
+    canonical_name = _clean_text_value(vlm_prediction.get("canonical_name"))
+    category_norm = _clean_text_value(
+        effective.get("category_norm") or vlm_prediction.get("category_norm")
+    )
+    category_label = _humanize_category_label(category_norm)
+    preferred_label = canonical_name or category_label
+
+    return {
+        "preferred_label": preferred_label,
+        "canonical_name": canonical_name,
+        "category_norm": category_norm,
+        "category_label": category_label,
+        "benchmark_relevance": _clean_text_value(
+            effective.get("benchmark_relevance") or vlm_prediction.get("benchmark_relevance")
+        ),
+        "annotation_source": _clean_text_value(
+            effective.get("source") or annotation.get("annotation_status")
+        ),
+        "annotator_model": _clean_text_value(provenance.get("model")),
+    }
+
+
 def _now_utc() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
@@ -265,17 +345,30 @@ def _front3d_object_entry(
     }
 
 
-def _normalize_sage_object(scene_dir: Path, room_id: str, obj: dict[str, object]) -> dict[str, object]:
+def _normalize_sage_object(
+    scene_dir: Path,
+    room_id: str,
+    obj: dict[str, object],
+    *,
+    asset_annotations: dict[str, dict[str, object]] | None = None,
+) -> dict[str, object]:
     source_id = obj.get("source_id")
     mesh_path = scene_dir / "objects" / f"{source_id}.ply" if source_id else None
     texture_path = (
         scene_dir / "objects" / f"{source_id}_texture.png" if source_id else None
     )
+    object_id = obj.get("id")
+    annotation_fields = _asset_annotation_label_fields(
+        asset_annotations.get(object_id) if asset_annotations and isinstance(object_id, str) else None
+    )
+    preferred_label = annotation_fields.get("preferred_label")
+    category_label = annotation_fields.get("category_label")
     return {
-        "id": obj.get("id"),
+        "id": object_id,
         "room_id": room_id,
-        "type": obj.get("type"),
-        "description": obj.get("description"),
+        "type": category_label or obj.get("type"),
+        "name": preferred_label or obj.get("type"),
+        "description": preferred_label or obj.get("description") or obj.get("type"),
         "position": obj.get("position"),
         "rotation": obj.get("rotation"),
         "dimensions": obj.get("dimensions"),
@@ -292,6 +385,15 @@ def _normalize_sage_object(scene_dir: Path, room_id: str, obj: dict[str, object]
                 if texture_path and texture_path.exists()
                 else None
             ),
+        },
+        "metadata": {
+            "vlm_canonical_name": annotation_fields.get("canonical_name"),
+            "vlm_category_norm": annotation_fields.get("category_norm"),
+            "vlm_benchmark_relevance": annotation_fields.get("benchmark_relevance"),
+            "vlm_annotation_source": annotation_fields.get("annotation_source"),
+            "vlm_annotator_model": annotation_fields.get("annotator_model"),
+            "original_type": obj.get("type"),
+            "original_description": obj.get("description"),
         },
     }
 
