@@ -136,6 +136,7 @@ export function RoomLayoutPreviewContent({
           assetPath: object.asset_path,
           position: resolveObjectPosition(object.id, object.position, objectPositionOverrides),
           rotationYDeg: resolveObjectRotation(object.id, object.rotation_y_deg, objectRotationOverrides),
+          quaternion: resolveObjectQuaternion(object.id, null, objectQuaternionOverrides),
           scale: object.scale,
         }),
       );
