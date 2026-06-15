@@ -127,13 +127,6 @@ function createProgressSnapshot(
   };
 }
 
-function formatCoordinate(value: number): string {
-  if (!Number.isFinite(value)) {
-    return "-";
-  }
-  return value.toFixed(3);
-}
-
 function PointerCoordinateReporter({
   sceneKey,
   onChange,
@@ -184,40 +177,6 @@ function PointerCoordinateReporter({
   }, [camera, gl, onChange, sceneKey]);
 
   return null;
-}
-
-function CanvasDebugHud({
-  pointerDebug,
-  selectedObjectDebugInfo,
-}: {
-  pointerDebug: ScenePointerDebugSnapshot | null;
-  selectedObjectDebugInfo?: ScenePreviewDebugObjectSnapshot | null;
-}) {
-  return (
-    <div className="canvas-debug-hud">
-      <div className="canvas-debug-card">
-        <span>Cursor</span>
-        <strong>
-          {pointerDebug ? `${pointerDebug.canvas[0]}, ${pointerDebug.canvas[1]}` : "Move on canvas"}
-        </strong>
-        <p>
-          {pointerDebug?.world
-            ? `World ${formatCoordinate(pointerDebug.world[0])}, ${formatCoordinate(pointerDebug.world[1])}, ${formatCoordinate(pointerDebug.world[2])}`
-            : "Ground-plane world coordinates"}
-        </p>
-      </div>
-
-      <div className="canvas-debug-card">
-        <span>Selected Object</span>
-        <strong>{selectedObjectDebugInfo?.label || "Nothing selected"}</strong>
-        <p>
-          {selectedObjectDebugInfo
-            ? `Pos ${formatCoordinate(selectedObjectDebugInfo.currentPosition[0])}, ${formatCoordinate(selectedObjectDebugInfo.currentPosition[1])}, ${formatCoordinate(selectedObjectDebugInfo.currentPosition[2])} · RotY ${formatCoordinate(selectedObjectDebugInfo.currentRotationYDeg)}°`
-            : "Click an object to inspect and tweak coordinates"}
-        </p>
-      </div>
-    </div>
-  );
 }
 
 export function ScenePreviewProgressIndicator({
@@ -401,7 +360,6 @@ function ScenePreviewViewport({
   wallDisplayMode,
   showObjectLabels,
   selectedObjectId,
-  selectedObjectDebugInfo,
   objectPositionOverrides,
   objectRotationOverrides,
   objectQuaternionOverrides,
@@ -424,10 +382,8 @@ function ScenePreviewViewport({
     total: 0,
     progress: 0,
   });
-  const [pointerDebug, setPointerDebug] = useState<ScenePointerDebugSnapshot | null>(null);
   const handlePointerDebugChange = useCallback(
     (snapshot: ScenePointerDebugSnapshot | null) => {
-      setPointerDebug(snapshot);
       onPointerDebugChange?.(snapshot);
     },
     [onPointerDebugChange],
@@ -503,11 +459,6 @@ function ScenePreviewViewport({
           }}
         />
       </Canvas>
-
-      <CanvasDebugHud
-        pointerDebug={pointerDebug}
-        selectedObjectDebugInfo={selectedObjectDebugInfo}
-      />
 
       <div className="canvas-caption">
         <div>

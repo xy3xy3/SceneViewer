@@ -50,6 +50,8 @@ a {
 }
 
 .topbar {
+  position: relative;
+  z-index: 50;
   display: grid;
   grid-template-columns: minmax(260px, 1fr) minmax(0, auto);
   align-items: flex-start;
@@ -125,6 +127,110 @@ a {
   color: #e2e8f0;
   padding: 0 12px;
   outline: none;
+}
+
+.searchable-select {
+  position: relative;
+  width: 100%;
+}
+
+.searchable-select-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.searchable-select-field input {
+  width: 100%;
+  height: 42px;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(15, 23, 42, 0.9);
+  color: #e2e8f0;
+  padding: 0 36px 0 12px;
+  outline: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.searchable-select-field input::placeholder {
+  color: #94a3b8;
+  opacity: 0.9;
+}
+
+.searchable-select-field input:focus {
+  border-color: rgba(96, 165, 250, 0.55);
+  background: rgba(30, 41, 59, 0.95);
+}
+
+.searchable-select-icon {
+  position: absolute;
+  right: 12px;
+  color: #94a3b8;
+  pointer-events: none;
+  transition:
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.searchable-select.is-open .searchable-select-icon {
+  color: #e2e8f0;
+  transform: rotate(180deg);
+}
+
+.searchable-select.is-disabled {
+  opacity: 0.65;
+}
+
+.searchable-select.is-disabled input {
+  cursor: not-allowed;
+  color: #64748b;
+}
+
+.searchable-select-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 100;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  background: rgba(2, 6, 23, 0.98);
+  box-shadow: 0 18px 36px rgba(2, 6, 23, 0.36);
+  backdrop-filter: blur(16px);
+}
+
+.searchable-select-option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  background: transparent;
+  color: #cbd5e1;
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.searchable-select-option:hover,
+.searchable-select-option.is-active {
+  background: rgba(30, 41, 59, 0.95);
+  color: #f8fafc;
+}
+
+.searchable-select-option.is-selected {
+  background: rgba(14, 165, 233, 0.15);
+  color: #7dd3fc;
+}
+
+.searchable-select-empty {
+  padding: 10px 12px;
+  color: #94a3b8;
+  font-size: 0.82rem;
 }
 
 .scene-select-row {
@@ -213,6 +319,8 @@ a {
 }
 
 .workspace {
+  position: relative;
+  z-index: 0;
   display: grid;
   grid-template-columns: minmax(0, 1.65fr) minmax(320px, 0.85fr);
   gap: 0;
@@ -240,50 +348,6 @@ a {
   position: relative;
   flex: 1;
   min-height: 0;
-}
-
-.canvas-debug-hud {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: min(320px, calc(100% - 32px));
-  pointer-events: none;
-}
-
-.canvas-debug-card {
-  padding: 10px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(2, 6, 23, 0.82);
-  backdrop-filter: blur(16px);
-}
-
-.canvas-debug-card span,
-.canvas-debug-card strong,
-.canvas-debug-card p {
-  display: block;
-}
-
-.canvas-debug-card span {
-  color: #64748b;
-  font-size: 0.72rem;
-  text-transform: uppercase;
-}
-
-.canvas-debug-card strong {
-  margin-top: 6px;
-  color: #f8fafc;
-  font-size: 0.9rem;
-  overflow-wrap: anywhere;
-}
-
-.canvas-debug-card p {
-  margin: 6px 0 0;
-  color: #94a3b8;
-  font-size: 0.76rem;
 }
 
 .canvas-progress {
@@ -957,12 +1021,6 @@ a {
   .canvas-caption {
     left: 12px;
     right: 12px;
-  }
-
-  .canvas-debug-hud {
-    left: 12px;
-    right: 12px;
-    width: auto;
   }
 
   .canvas-progress {

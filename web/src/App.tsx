@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import {
   Boxes,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -70,6 +71,12 @@ type ObjectFinderGroup = {
   items: ObjectFinderEntry[];
 };
 
+type SearchableSelectOption = {
+  value: string;
+  label: string;
+  searchText?: string;
+};
+
 const DEBUG_AXES: Array<{ axis: DebugAxis; index: 0 | 1 | 2 }> = [
   { axis: "x", index: 0 },
   { axis: "y", index: 1 },
@@ -78,6 +85,12 @@ const DEBUG_AXES: Array<{ axis: DebugAxis; index: 0 | 1 | 2 }> = [
 
 const QUATERNION_AXES: QuaternionAxis[] = ["x", "y", "z", "w"];
 const EULER_ORDER = "XYZ";
+const WALL_DISPLAY_MODE_OPTIONS: SearchableSelectOption[] = [
+  { value: "solid", label: "Solid" },
+  { value: "transparent", label: "Transparent" },
+  { value: "hidden", label: "Hidden" },
+  { value: "wireframe", label: "Wireframe" },
+];
 
 function formatDatasetLabel(dataset: string): string {
   if (dataset === "hsm") {
@@ -106,6 +119,261 @@ function formatSceneLabel(
     return `${scene.subset} / ${scene.scene_id}`;
   }
   return metadata?.title || scene.scene_id;
+}
+
+function normalizeSearchText(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function isFuzzyTermMatch(searchText: string, term: string): boolean {
+  if (searchText.includes(term)) {
+    return true;
+  }
+
+  let termIndex = 0;
+  for (const character of searchText) {
+    if (character === term[termIndex]) {
+      termIndex += 1;
+      if (termIndex === term.length) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function filterSearchableOptions(
+  options: SearchableSelectOption[],
+  query: string,
+): SearchableSelectOption[] {
+  const terms = normalizeSearchText(query).split(/\s+/).filter(Boolean);
+  if (!terms.length) {
+    return options;
+  }
+
+  return options.filter((option) => {
+    const searchText = normalizeSearchText(
+      [option.label, option.value, option.searchText ?? ""].join(" "),
+    );
+    return terms.every((term) => isFuzzyTermMatch(searchText, term));
+  });
+}
+
+function SearchableSelect({
+  ariaLabel,
+  disabled = false,
+  emptyMessage = "No matches",
+  onChange,
+  options,
+  placeholder = "Choose an option",
+  value,
+}: {
+  ariaLabel: string;
+  disabled?: boolean;
+  emptyMessage?: string;
+  onChange: (value: string) => void;
+  options: SearchableSelectOption[];
+  placeholder?: string;
+  value: string;
+}) {
+  const listboxId = useId();
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const selectedOption = useMemo(
+    () => options.find((option) => option.value === value) ?? null,
+    [options, value],
+  );
+  const filteredOptions = useMemo(
+    () => filterSearchableOptions(options, query),
+    [options, query],
+  );
+  const dropdownOpen = isOpen && !disabled;
+  const inputValue = dropdownOpen ? query : selectedOption?.label ?? "";
+  const inputPlaceholder = dropdownOpen ? selectedOption?.label ?? placeholder : placeholder;
+  const visibleActiveIndex =
+    activeIndex >= 0 && activeIndex < filteredOptions.length
+      ? activeIndex
+      : filteredOptions.length
+        ? 0
+        : -1;
+  const activeOption = visibleActiveIndex >= 0 ? filteredOptions[visibleActiveIndex] : null;
+
+  const closeDropdown = useCallback(() => {
+    setIsOpen(false);
+    setQuery("");
+    setActiveIndex(-1);
+  }, []);
+
+  const openDropdown = useCallback(() => {
+    if (disabled) {
+      return;
+    }
+
+    setIsOpen(true);
+    setActiveIndex(filteredOptions.length ? 0 : -1);
+  }, [disabled, filteredOptions.length]);
+
+  const selectOption = useCallback(
+    (option: SearchableSelectOption) => {
+      onChange(option.value);
+      closeDropdown();
+      inputRef.current?.blur();
+    },
+    [closeDropdown, onChange],
+  );
+
+  useEffect(() => {
+    if (!dropdownOpen) {
+      return;
+    }
+
+    function handleDocumentPointerDown(event: PointerEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        closeDropdown();
+      }
+    }
+
+    document.addEventListener("pointerdown", handleDocumentPointerDown);
+    return () => document.removeEventListener("pointerdown", handleDocumentPointerDown);
+  }, [closeDropdown, dropdownOpen]);
+
+  function handleInputFocus() {
+    setQuery("");
+    if (!disabled) {
+      setIsOpen(true);
+      setActiveIndex(options.length ? 0 : -1);
+    }
+  }
+
+  function handleInputChange(nextQuery: string) {
+    const nextFilteredOptions = filterSearchableOptions(options, nextQuery);
+    setQuery(nextQuery);
+    setActiveIndex(nextFilteredOptions.length ? 0 : -1);
+    if (!isOpen) {
+      setIsOpen(true);
+    }
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (disabled) {
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (!dropdownOpen) {
+        openDropdown();
+        return;
+      }
+
+      if (filteredOptions.length) {
+        setActiveIndex((current) => (current + 1) % filteredOptions.length);
+      }
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!dropdownOpen) {
+        openDropdown();
+        return;
+      }
+
+      if (filteredOptions.length) {
+        setActiveIndex((current) => {
+          const normalizedIndex = current < 0 ? 0 : current;
+          return (normalizedIndex - 1 + filteredOptions.length) % filteredOptions.length;
+        });
+      }
+      return;
+    }
+
+    if (event.key === "Enter") {
+      if (!dropdownOpen) {
+        openDropdown();
+        return;
+      }
+
+      event.preventDefault();
+      if (activeOption) {
+        selectOption(activeOption);
+      }
+      return;
+    }
+
+    if (event.key === "Escape") {
+      if (dropdownOpen) {
+        event.preventDefault();
+        closeDropdown();
+      }
+      return;
+    }
+
+    if (event.key === "Tab") {
+      closeDropdown();
+    }
+  }
+
+  return (
+    <div
+      ref={rootRef}
+      className={`searchable-select${dropdownOpen ? " is-open" : ""}${
+        disabled ? " is-disabled" : ""
+      }`}
+    >
+      <div className="searchable-select-field">
+        <input
+          ref={inputRef}
+          type="text"
+          value={inputValue}
+          placeholder={inputPlaceholder}
+          onFocus={handleInputFocus}
+          onChange={(event) => handleInputChange(event.currentTarget.value)}
+          onKeyDown={handleKeyDown}
+          disabled={disabled}
+          role="combobox"
+          aria-label={ariaLabel}
+          aria-autocomplete="list"
+          aria-expanded={dropdownOpen}
+          aria-controls={listboxId}
+          aria-activedescendant={
+            dropdownOpen && visibleActiveIndex >= 0
+              ? `${listboxId}-option-${visibleActiveIndex}`
+              : undefined
+          }
+        />
+        <ChevronDown className="searchable-select-icon" size={16} aria-hidden="true" />
+      </div>
+      {dropdownOpen ? (
+        <div id={listboxId} className="searchable-select-menu" role="listbox">
+          {filteredOptions.length ? (
+            filteredOptions.map((option, index) => (
+              <button
+                id={`${listboxId}-option-${index}`}
+                key={option.value}
+                type="button"
+                className={`searchable-select-option${
+                  index === visibleActiveIndex ? " is-active" : ""
+                }${option.value === value ? " is-selected" : ""}`}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => selectOption(option)}
+                role="option"
+                aria-selected={option.value === value}
+              >
+                {option.label}
+              </button>
+            ))
+          ) : (
+            <div className="searchable-select-empty">{emptyMessage}</div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function collectPreviewImages(scene: SceneManifest | null): string[] {
@@ -584,6 +852,33 @@ export default function App() {
         (selectedPreprocessedDatasetIndex?.scenes ?? []).map((scene) => [scene.scene_uid, scene] as const),
       ),
     [selectedPreprocessedDatasetIndex],
+  );
+  const datasetSelectOptions = useMemo<SearchableSelectOption[]>(
+    () =>
+      (catalog?.datasets ?? []).map((entry) => ({
+        value: entry.dataset,
+        label: `${formatDatasetLabel(entry.dataset)} (${entry.scene_count})`,
+        searchText: entry.dataset,
+      })),
+    [catalog],
+  );
+  const sceneSelectOptions = useMemo<SearchableSelectOption[]>(
+    () =>
+      (selectedDatasetIndex?.scenes ?? []).map((scene) => {
+        const metadata = preprocessedSceneSummaryMap.get(scene.scene_uid);
+        return {
+          value: scene.scene_uid,
+          label: formatSceneLabel(scene, metadata),
+          searchText: [
+            scene.scene_uid,
+            scene.scene_id,
+            scene.subset ?? "",
+            metadata?.title ?? "",
+            metadata?.description ?? "",
+          ].join(" "),
+        };
+      }),
+    [preprocessedSceneSummaryMap, selectedDatasetIndex],
   );
 
   useEffect(() => {
@@ -1141,22 +1436,20 @@ export default function App() {
         </div>
 
         <div className="toolbar">
-          <label className="select-shell">
+          <div className="select-shell">
             <span>Dataset</span>
-            <select
+            <SearchableSelect
+              ariaLabel="Dataset"
               value={selectedDataset}
-              onChange={(event) => handleDatasetChange(event.target.value)}
+              onChange={handleDatasetChange}
               disabled={loading || !(catalog?.datasets.length ?? 0)}
-            >
-              {catalog?.datasets.map((entry) => (
-                <option key={entry.dataset} value={entry.dataset}>
-                  {formatDatasetLabel(entry.dataset)} ({entry.scene_count})
-                </option>
-              ))}
-            </select>
-          </label>
+              options={datasetSelectOptions}
+              placeholder="Choose a dataset"
+              emptyMessage="No datasets found"
+            />
+          </div>
 
-          <label className="select-shell select-shell-scene">
+          <div className="select-shell select-shell-scene">
             <span>Scene</span>
             <div className="scene-select-row">
               <button
@@ -1168,17 +1461,15 @@ export default function App() {
               >
                 <ChevronLeft size={16} />
               </button>
-              <select
+              <SearchableSelect
+                ariaLabel="Scene"
                 value={selectedSceneUid}
-                onChange={(event) => setSelectedSceneUid(event.target.value)}
+                onChange={setSelectedSceneUid}
                 disabled={loading || !(selectedDatasetIndex?.scenes.length ?? 0)}
-              >
-                {selectedDatasetIndex?.scenes.map((scene) => (
-                  <option key={scene.scene_uid} value={scene.scene_uid}>
-                    {formatSceneLabel(scene, preprocessedSceneSummaryMap.get(scene.scene_uid))}
-                  </option>
-                ))}
-              </select>
+                options={sceneSelectOptions}
+                placeholder="Choose a scene"
+                emptyMessage="No scenes found"
+              />
               <button
                 type="button"
                 className="scene-switch-button"
@@ -1189,7 +1480,7 @@ export default function App() {
                 <ChevronRight size={16} />
               </button>
             </div>
-          </label>
+          </div>
 
           <label className="control-shell control-shell-range">
             <span>Wall Opacity</span>
@@ -1207,18 +1498,16 @@ export default function App() {
             </div>
           </label>
 
-          <label className="select-shell">
+          <div className="select-shell">
             <span>Wall View</span>
-            <select
+            <SearchableSelect
+              ariaLabel="Wall view"
               value={wallDisplayMode}
-              onChange={(event) => setWallDisplayMode(event.target.value as WallDisplayMode)}
-            >
-              <option value="solid">Solid</option>
-              <option value="transparent">Transparent</option>
-              <option value="hidden">Hidden</option>
-              <option value="wireframe">Wireframe</option>
-            </select>
-          </label>
+              onChange={(nextValue) => setWallDisplayMode(nextValue as WallDisplayMode)}
+              options={WALL_DISPLAY_MODE_OPTIONS}
+              placeholder="Choose wall view"
+            />
+          </div>
 
           <label className="control-shell control-shell-toggle">
             <span>Object Labels</span>
