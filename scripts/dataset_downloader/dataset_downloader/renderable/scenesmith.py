@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .common import *
 
+
 def _scenesmith_rotation_y_deg(object_data: dict[str, object]) -> float:
     rotation_three = _scenesmith_source_rotation_to_three(
         _scenesmith_source_rotation_matrix(object_data)
@@ -29,6 +30,55 @@ def _scenesmith_resolve_repo_relative_path(base_path: str, relative_path: str) -
             continue
         base_parts.append(segment)
     return "/".join(base_parts)
+
+
+def _parse_scenesmith_mesh_scale(scale_text: str | None) -> list[float] | None:
+    if not scale_text:
+        return None
+    values = [float(value) for value in scale_text.split() if value.strip()]
+    if len(values) < 3:
+        return None
+    return [values[0], values[1], values[2]]
+
+
+def _scenesmith_object_scale(
+    object_data: dict[str, object],
+    cache: dict[tuple[str, str], list[float]],
+) -> list[float]:
+    sdf_path = object_data.get("sdf_path")
+    gltf_path = object_data.get("gltf_path")
+    if not isinstance(sdf_path, str) or not isinstance(gltf_path, str):
+        return [1.0, 1.0, 1.0]
+
+    cache_key = (sdf_path, gltf_path)
+    if cache_key in cache:
+        return cache[cache_key]
+
+    resolved_sdf_path = REPO_ROOT / sdf_path
+    if not resolved_sdf_path.exists():
+        cache[cache_key] = [1.0, 1.0, 1.0]
+        return cache[cache_key]
+
+    try:
+        document = ET.fromstring(resolved_sdf_path.read_text())
+    except ET.ParseError:
+        cache[cache_key] = [1.0, 1.0, 1.0]
+        return cache[cache_key]
+
+    target_name = Path(gltf_path).name
+    for visual in document.findall(".//visual"):
+        uri = visual.findtext("./geometry/mesh/uri")
+        if not uri:
+            continue
+        resolved_gltf_path = _scenesmith_resolve_repo_relative_path(sdf_path, uri.strip())
+        if resolved_gltf_path != gltf_path and Path(resolved_gltf_path).name != target_name:
+            continue
+        scale = _parse_scenesmith_mesh_scale(visual.findtext("./geometry/mesh/scale"))
+        cache[cache_key] = scale or [1.0, 1.0, 1.0]
+        return cache[cache_key]
+
+    cache[cache_key] = [1.0, 1.0, 1.0]
+    return cache[cache_key]
 
 
 def _scenesmith_room_geometry_visual_asset_paths(scene_manifest: dict[str, object]) -> set[str]:
@@ -265,6 +315,7 @@ def build_scenesmith_renderables(scene_limit: int | None = None) -> dict[str, ob
         }
 
         room_shells: list[dict[str, object]] = []
+        object_scale_cache: dict[tuple[str, str], list[float]] = {}
         for room in scene_manifest["normalized"]["rooms"]:
             room_translation = _axis_swap_source_to_three(room_frames.get(room["id"], [0.0, 0.0, 0.0]))
             floor_plan = room.get("floor_plan_assets") or {}
@@ -307,7 +358,7 @@ def build_scenesmith_renderables(scene_limit: int | None = None) -> dict[str, ob
                     "position": _axis_swap_source_to_three(world_translation),
                     "rotation_y_deg": _scenesmith_rotation_y_deg(obj),
                     "quaternion": _scenesmith_three_quaternion(obj),
-                    "scale": [1.0, 1.0, 1.0],
+                    "scale": _scenesmith_object_scale(obj, object_scale_cache),
                     "room_id": obj["room_id"],
                     "object_type": obj.get("object_type"),
                     "description": obj.get("description"),
@@ -351,4 +402,3 @@ def build_scenesmith_renderables(scene_limit: int | None = None) -> dict[str, ob
         source_scene_count=len(scene_summaries),
         status="ready",
     )
-
