@@ -17,6 +17,17 @@ def _scenesmith_three_quaternion(object_data: dict[str, object]) -> list[float] 
     return _quaternion_from_rotation_matrix(rotation_three)
 
 
+def _scenesmith_forward_direction_three(object_data: dict[str, object]) -> list[float]:
+    forward_source = np.array([0.0, 1.0, 0.0], dtype=float)
+    forward_three = _axis_swap_source_to_three(
+        (_scenesmith_source_rotation_matrix(object_data) @ forward_source).tolist()
+    )
+    length = math.sqrt(sum(float(value) * float(value) for value in forward_three))
+    if length <= 1e-8:
+        return [0.0, 0.0, -1.0]
+    return [float(value) / length for value in forward_three]
+
+
 def _scenesmith_resolve_repo_relative_path(base_path: str, relative_path: str) -> str:
     base_parts = base_path.split("/")
     if base_parts:
@@ -358,6 +369,8 @@ def build_scenesmith_renderables(scene_limit: int | None = None) -> dict[str, ob
                     "position": _axis_swap_source_to_three(world_translation),
                     "rotation_y_deg": _scenesmith_rotation_y_deg(obj),
                     "quaternion": _scenesmith_three_quaternion(obj),
+                    "forward_direction": _scenesmith_forward_direction_three(obj),
+                    "forward_direction_source": "scenesmith_asset_normalization:+Y",
                     "scale": _scenesmith_object_scale(obj, object_scale_cache),
                     "room_id": obj["room_id"],
                     "object_type": obj.get("object_type"),

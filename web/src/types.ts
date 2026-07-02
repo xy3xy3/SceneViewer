@@ -186,6 +186,12 @@ export interface NormalizedObject {
     texture?: string | null;
   } | null;
   metadata?: Record<string, unknown>;
+  canonical_forward?: {
+    axis?: string;
+    vector?: [number, number, number];
+    coordinate_space?: string;
+    source?: string;
+  } | null;
   quaternion?: [number, number, number, number] | null;
   scale?: [number, number, number] | null;
 }
@@ -229,6 +235,8 @@ export interface RenderableSceneSmithAsset {
   position: [number, number, number];
   rotation_y_deg: number;
   quaternion?: [number, number, number, number] | null;
+  forward_direction?: [number, number, number] | null;
+  forward_direction_source?: string | null;
   scale: [number, number, number];
   room_id: string;
 }

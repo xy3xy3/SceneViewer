@@ -8,6 +8,7 @@ import {
   type RenderProgressSnapshot,
   type SceneBounds,
   type WallDisplayMode,
+  ObjectForwardArrows,
   ObjectHitTargets,
   ObjectLabels,
   SceneBoundsController,
@@ -16,7 +17,12 @@ import {
   createEmptyBatchProgress,
   updateMeasuredBoundsMap,
 } from "./shared";
-import { buildSceneSmithObjectAssets, buildSceneSmithShellAssets, sceneSmithRoomGeometryPaths } from "./scenesmith/assets";
+import {
+  buildSceneSmithForwardArrowPlacements,
+  buildSceneSmithObjectAssets,
+  buildSceneSmithShellAssets,
+  sceneSmithRoomGeometryPaths,
+} from "./scenesmith/assets";
 import { computeSceneSmithBounds } from "./scenesmith/bounds";
 import { buildSceneSmithInspectableObjects } from "./scenesmith/inspectables";
 import { useSceneSmithShellTransforms } from "./scenesmith/useSceneSmithShellTransforms";
@@ -27,6 +33,7 @@ export function SceneSmithPreviewContent({
   wallOpacity,
   wallDisplayMode,
   showObjectLabels,
+  showForwardArrows,
   selectedObjectId,
   onSelectedObjectChange,
   objectPositionOverrides,
@@ -39,6 +46,7 @@ export function SceneSmithPreviewContent({
   wallOpacity: number;
   wallDisplayMode: WallDisplayMode;
   showObjectLabels: boolean;
+  showForwardArrows: boolean;
   selectedObjectId: string | null;
   onSelectedObjectChange: (id: string | null) => void;
   objectPositionOverrides?: Record<string, Vector3Tuple>;
@@ -97,6 +105,18 @@ export function SceneSmithPreviewContent({
   const objectLabels = useMemo(
     () => buildObjectLabels(inspectableObjects, showObjectLabels, selectedObjectId, hoveredObjectId),
     [hoveredObjectId, inspectableObjects, selectedObjectId, showObjectLabels],
+  );
+  const forwardArrows = useMemo(
+    () =>
+      showForwardArrows
+        ? buildSceneSmithForwardArrowPlacements({
+            renderScene,
+            inspectableObjects,
+            selectedObjectId,
+            positionOverrides: objectPositionOverrides,
+          })
+        : [],
+    [inspectableObjects, objectPositionOverrides, renderScene, selectedObjectId, showForwardArrows],
   );
 
   useEffect(() => {
@@ -209,6 +229,7 @@ export function SceneSmithPreviewContent({
               activeId={selectedObjectId}
               hoveredId={hoveredObjectId}
             />
+            <ObjectForwardArrows items={forwardArrows} />
             <ObjectLabels items={objectLabels} />
           </>
         ) : null}

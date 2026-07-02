@@ -92,6 +92,14 @@ export type ObjectLabelPlacement = {
   position: Vector3Tuple;
 };
 
+export type ObjectForwardArrowPlacement = {
+  id: string;
+  position: Vector3Tuple;
+  direction: Vector3Tuple;
+  size: Vector3Tuple;
+  active?: boolean;
+};
+
 export type InspectableObject = ObjectLabelPlacement & {
   size: Vector3Tuple;
 };
@@ -401,6 +409,68 @@ export function compactSceneSmithName(
 
   next = next.replace(/_\d+$/, "");
   return next || text || null;
+}
+
+function horizontalDirection(direction: Vector3Tuple): THREE.Vector3 | null {
+  const vector = new THREE.Vector3(direction[0], 0, direction[2]);
+  if (vector.lengthSq() <= 1e-8) {
+    return null;
+  }
+  return vector.normalize();
+}
+
+function ObjectForwardArrow({ item }: { item: ObjectForwardArrowPlacement }) {
+  const direction = useMemo(() => horizontalDirection(item.direction), [item.direction]);
+  const quaternion = useMemo(() => {
+    if (!direction) {
+      return null;
+    }
+    return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+  }, [direction]);
+
+  if (!direction || !quaternion) {
+    return null;
+  }
+
+  const footprint = Math.max(Math.abs(item.size[0]), Math.abs(item.size[2]), 0.35);
+  const length = THREE.MathUtils.clamp(footprint * 0.62, 0.36, 1.35);
+  const headLength = THREE.MathUtils.clamp(length * 0.28, 0.12, 0.24);
+  const shaftLength = Math.max(length - headLength, 0.18);
+  const shaftRadius = item.active ? 0.026 : 0.018;
+  const headRadius = item.active ? 0.088 : 0.068;
+  const color = item.active ? "#fb923c" : "#38d5ff";
+  const origin: Vector3Tuple = [
+    item.position[0],
+    item.position[1] + Math.max(item.size[1] / 2, 0.12) + 0.16,
+    item.position[2],
+  ];
+
+  return (
+    <group position={origin} quaternion={quaternion} renderOrder={80}>
+      <mesh position={[0, shaftLength / 2, 0]} renderOrder={80}>
+        <cylinderGeometry args={[shaftRadius, shaftRadius, shaftLength, 14]} />
+        <meshBasicMaterial color={color} depthTest={false} depthWrite={false} />
+      </mesh>
+      <mesh position={[0, shaftLength + headLength / 2, 0]} renderOrder={81}>
+        <coneGeometry args={[headRadius, headLength, 20]} />
+        <meshBasicMaterial color={color} depthTest={false} depthWrite={false} />
+      </mesh>
+    </group>
+  );
+}
+
+export function ObjectForwardArrows({ items }: { items: ObjectForwardArrowPlacement[] }) {
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <group>
+      {items.map((item) => (
+        <ObjectForwardArrow key={item.id} item={item} />
+      ))}
+    </group>
+  );
 }
 
 export function PreviewEnvironment() {

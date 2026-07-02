@@ -3,6 +3,14 @@ from __future__ import annotations
 from .common import *
 
 
+SCENESMITH_CANONICAL_FORWARD = {
+    "axis": "+Y",
+    "vector": [0.0, 1.0, 0.0],
+    "coordinate_space": "asset_local",
+    "source": "scenesmith_asset_normalization",
+}
+
+
 def _scenesmith_annotation_subset_candidates(subset: str) -> list[str]:
     candidates = [subset]
     if subset.startswith("local-"):
@@ -281,6 +289,7 @@ def _build_scenesmith_fallback_state(
             "name": model_name,
             "description": None,
             "object_type": _object_type_from_package_path(file_uri),
+            "canonical_forward": SCENESMITH_CANONICAL_FORWARD,
             "transform": {
                 "translation": pose.get("translation") if isinstance(pose, dict) else None,
                 "rotation_angle_axis": _extract_angle_axis(
@@ -366,6 +375,11 @@ def _normalize_scenesmith_room(
                 )
                 or metadata.get("object_type")
                 or metadata.get("asset_type"),
+                "canonical_forward": (
+                    obj_data.get("canonical_forward")
+                    if isinstance(obj_data, dict) and isinstance(obj_data.get("canonical_forward"), dict)
+                    else SCENESMITH_CANONICAL_FORWARD
+                ),
                 "transform": (
                     obj_data.get("transform") if isinstance(obj_data, dict) else None
                 ),

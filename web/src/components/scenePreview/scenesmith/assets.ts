@@ -5,6 +5,8 @@ import {
   resolveObjectQuaternion,
   resolveObjectRotation,
   type AssetPlacement,
+  type InspectableObject,
+  type ObjectForwardArrowPlacement,
   type QuaternionTuple,
   type SceneSmithShellTransform,
   type Vector3Tuple,
@@ -80,4 +82,49 @@ export function buildSceneSmithObjectAssets(
     quaternion: resolveObjectQuaternion(object.id, object.quaternion, quaternionOverrides),
     scale: object.scale,
   }));
+}
+
+function isVector3Tuple(value: unknown): value is Vector3Tuple {
+  return (
+    Array.isArray(value) &&
+    value.length >= 3 &&
+    value.slice(0, 3).every((entry) => typeof entry === "number" && Number.isFinite(entry))
+  );
+}
+
+export function buildSceneSmithForwardArrowPlacements({
+  renderScene,
+  inspectableObjects,
+  selectedObjectId,
+  positionOverrides,
+}: {
+  renderScene: RenderableSceneSmithSceneManifest;
+  inspectableObjects: InspectableObject[];
+  selectedObjectId: string | null;
+  positionOverrides?: Record<string, Vector3Tuple>;
+}): ObjectForwardArrowPlacement[] {
+  const inspectableById = new Map(inspectableObjects.map((object) => [object.id, object] as const));
+
+  return renderScene.objects.flatMap((object): ObjectForwardArrowPlacement[] => {
+    if (!isVector3Tuple(object.forward_direction)) {
+      return [];
+    }
+
+    const inspectable = inspectableById.get(object.id);
+    return [
+      {
+        id: object.id,
+        position:
+          inspectable?.position ??
+          resolveObjectPosition(object.id, object.position, positionOverrides),
+        direction: object.forward_direction,
+        size: inspectable?.size ?? [
+          Math.max(Math.abs(object.scale[0]), 0.45),
+          Math.max(Math.abs(object.scale[1]), 0.45),
+          Math.max(Math.abs(object.scale[2]), 0.45),
+        ],
+        active: object.id === selectedObjectId,
+      },
+    ];
+  });
 }

@@ -6,7 +6,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 DATASET_TOOL_DIR="$REPO_ROOT/scripts/dataset_downloader"
 
-SOURCE_ROOT=${1:-/data/task3_2/L202500266_hrk/code/scenesmith/outputs/critic_probe/2026-06-24_21-21-36}
+SOURCE_ROOT=${1:-/data/task3_2/L202500266_hrk/code/scenesmith/outputs/critic_probe/2026-07-01_16-31-19/critic_on}
 
 declare -A SUBSET_NAMES=(
   [critic_off]=critic-off
@@ -54,8 +54,34 @@ main() {
     uv sync
   )
 
-  import_probe_group "critic_off" "${SUBSET_NAMES[critic_off]}"
-  import_probe_group "critic_on" "${SUBSET_NAMES[critic_on]}"
+  local source_name
+  source_name=$(basename "$SOURCE_ROOT")
+  if [[ -n "${SUBSET_NAMES[$source_name]:-}" ]]; then
+    local group_dir="$SOURCE_ROOT"
+    local subset_name="${SUBSET_NAMES[$source_name]}"
+    mapfile -t batch_dirs < <(find "$group_dir" -mindepth 1 -maxdepth 1 -type d -name 'batch_*' | sort)
+    if [[ ${#batch_dirs[@]} -eq 0 ]]; then
+      echo "No batch directories found under: $group_dir" >&2
+      exit 1
+    fi
+
+    echo "Importing $source_name into subset '$subset_name' (${#batch_dirs[@]} batches)"
+    for batch_dir in "${batch_dirs[@]}"; do
+      echo "  - $(basename "$batch_dir")"
+      (
+        cd "$DATASET_TOOL_DIR"
+        uv run dataset-downloader import-scenesmith-local \
+          "$batch_dir" \
+          --subset "$subset_name"
+      )
+    done
+  else
+    for group_name in "${!SUBSET_NAMES[@]}"; do
+      if [[ -d "$SOURCE_ROOT/$group_name" ]]; then
+        import_probe_group "$group_name" "${SUBSET_NAMES[$group_name]}"
+      fi
+    done
+  fi
 
   echo "Rebuilding SceneSmith preview data"
   (
@@ -65,9 +91,7 @@ main() {
   )
 
   echo "Done. Imported critic probe scenes from: $SOURCE_ROOT"
-  echo "Web scenes will appear under the SceneSmith dataset with subsets:"
-  echo "  - ${SUBSET_NAMES[critic_off]}"
-  echo "  - ${SUBSET_NAMES[critic_on]}"
+  echo "Web scenes will appear under the SceneSmith dataset."
 }
 
 main "$@"

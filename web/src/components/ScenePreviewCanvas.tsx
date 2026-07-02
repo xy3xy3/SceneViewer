@@ -31,6 +31,7 @@ interface ScenePreviewCanvasProps {
   wallOpacity: number;
   wallDisplayMode: "solid" | "transparent" | "hidden" | "wireframe";
   showObjectLabels: boolean;
+  showForwardArrows: boolean;
   selectedObjectId: string | null;
   selectedObjectDebugInfo?: ScenePreviewDebugObjectSnapshot | null;
   objectPositionOverrides?: Record<string, Vector3Tuple>;
@@ -253,6 +254,7 @@ function PreviewContent({
   wallOpacity,
   wallDisplayMode,
   showObjectLabels,
+  showForwardArrows,
   selectedObjectId,
   onSelectedObjectChange,
   objectPositionOverrides,
@@ -265,6 +267,7 @@ function PreviewContent({
   wallOpacity: number;
   wallDisplayMode: "solid" | "transparent" | "hidden" | "wireframe";
   showObjectLabels: boolean;
+  showForwardArrows: boolean;
   selectedObjectId: string | null;
   onSelectedObjectChange: (id: string | null) => void;
   objectPositionOverrides?: Record<string, Vector3Tuple>;
@@ -341,6 +344,7 @@ function PreviewContent({
           wallOpacity={wallOpacity}
           wallDisplayMode={wallDisplayMode}
           showObjectLabels={showObjectLabels}
+          showForwardArrows={showForwardArrows}
           selectedObjectId={selectedObjectId}
           onSelectedObjectChange={onSelectedObjectChange}
           objectPositionOverrides={objectPositionOverrides}
@@ -359,6 +363,7 @@ function ScenePreviewViewport({
   wallOpacity,
   wallDisplayMode,
   showObjectLabels,
+  showForwardArrows,
   selectedObjectId,
   objectPositionOverrides,
   objectRotationOverrides,
@@ -439,6 +444,7 @@ function ScenePreviewViewport({
           wallOpacity={wallOpacity}
           wallDisplayMode={wallDisplayMode}
           showObjectLabels={showObjectLabels}
+          showForwardArrows={showForwardArrows}
           selectedObjectId={selectedObjectId}
           onSelectedObjectChange={onSelectedObjectChange ?? (() => undefined)}
           objectPositionOverrides={objectPositionOverrides}

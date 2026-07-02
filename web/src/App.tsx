@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Compass,
   Copy,
   Database,
   Image as ImageIcon,
@@ -725,6 +726,7 @@ export default function App() {
   const [wallOpacity, setWallOpacity] = useState(0.35);
   const [wallDisplayMode, setWallDisplayMode] = useState<WallDisplayMode>("transparent");
   const [showObjectLabels, setShowObjectLabels] = useState(false);
+  const [showForwardArrows, setShowForwardArrows] = useState(true);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [objectPositionOverrides, setObjectPositionOverrides] = useState<
     Record<string, Vector3Tuple>
@@ -1521,6 +1523,21 @@ export default function App() {
               <strong>{showObjectLabels ? "On" : "Off"}</strong>
             </div>
           </label>
+
+          {selectedDataset === "scenesmith" ? (
+            <label className="control-shell control-shell-toggle">
+              <span>Forward</span>
+              <div className="toggle-control">
+                <Compass size={14} />
+                <input
+                  type="checkbox"
+                  checked={showForwardArrows}
+                  onChange={(event) => setShowForwardArrows(event.target.checked)}
+                />
+                <strong>{showForwardArrows ? "On" : "Off"}</strong>
+              </div>
+            </label>
+          ) : null}
         </div>
 
         {selectedRenderScene ? (
@@ -1541,6 +1558,7 @@ export default function App() {
             wallOpacity={wallOpacity}
             wallDisplayMode={wallDisplayMode}
             showObjectLabels={showObjectLabels}
+            showForwardArrows={showForwardArrows}
             selectedObjectId={selectedObjectId}
             selectedObjectDebugInfo={selectedObjectDebugInfo}
             objectPositionOverrides={objectPositionOverrides}
