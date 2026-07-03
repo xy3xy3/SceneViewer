@@ -69,6 +69,21 @@ def _is_scenesmith_archive_candidate(path: Path) -> bool:
     return _is_scenesmith_archive_file(path) and path.name.startswith("scene_")
 
 
+def _build_invalid_scenesmith_scene_entry(path: Path) -> dict[str, object]:
+    missing_requirements: list[str] = []
+    if not (path / "package.xml").exists():
+        missing_requirements.append("package.xml")
+    if not (path / "combined_house").is_dir():
+        missing_requirements.append("combined_house/")
+
+    return {
+        "scene_id": path.name,
+        "source_dir": str(path),
+        "reason": "invalid_scene_dir",
+        "missing_requirements": missing_requirements,
+    }
+
+
 def _has_scenesmith_scene_ancestor(path: Path, stop_at: Path) -> bool:
     for parent in path.parents:
         if parent == stop_at:
@@ -125,6 +140,7 @@ def _discover_local_scenesmith_import_groups(
         ], []
 
     direct_scene_sources = []
+    direct_skipped: list[dict[str, object]] = []
     if resolved.is_dir():
         for path in sorted(resolved.iterdir()):
             candidate = path.resolve()
@@ -136,8 +152,12 @@ def _discover_local_scenesmith_import_groups(
                 direct_scene_sources.append(
                     _LocalSceneSmithImportSource(candidate, _archive_scene_id(candidate), "archive")
                 )
+            elif candidate.is_dir() and candidate.name.startswith("scene_"):
+                direct_skipped.append(_build_invalid_scenesmith_scene_entry(candidate))
     if direct_scene_sources:
-        return [(_default_scenesmith_import_subset(resolved), direct_scene_sources)], []
+        return [(_default_scenesmith_import_subset(resolved), direct_scene_sources)], direct_skipped
+    if direct_skipped:
+        return [], direct_skipped
 
     if not resolved.is_dir():
         raise SystemExit(
@@ -167,19 +187,16 @@ def _discover_local_scenesmith_import_groups(
             )
             continue
         if candidate.is_dir():
-            skipped.append(
-                {
-                    "scene_id": candidate.name,
-                    "source_dir": str(candidate),
-                    "reason": "invalid_scene_dir",
-                }
-            )
+            skipped.append(_build_invalid_scenesmith_scene_entry(candidate))
 
     if grouped:
         return [
             (subset_name, scene_sources)
             for subset_name, scene_sources in sorted(grouped.items())
         ], skipped
+
+    if skipped:
+        return [], skipped
 
     raise SystemExit(
         "Did not find any valid SceneSmith inputs under "
